@@ -1,0 +1,14 @@
+[Desktop Entry]
+Name=Bitcoin
+Comment=Configurable mempool.space values in the panel
+Comment[de]=Konfigurierbare Mempool.space-Werte im Panel
+Type=Application
+Exec=@BIN@
+Terminal=false
+Categories=COSMIC;
+Keywords=COSMIC;Applet;Bitcoin;Mempool;Price;Fees;Blockheight;
+Icon=net.d11n.CosmicBitcoin
+StartupNotify=true
+NoDisplay=true
+X-CosmicApplet=true
+X-CosmicShrinkable=true
