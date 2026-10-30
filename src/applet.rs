@@ -99,6 +99,25 @@ pub fn fmt_updated(unix: i64) -> String {
         .unwrap_or_else(|| unix.to_string())
 }
 
+/// Mergt Fetch-Ergebnisse in die Wert-Map.
+///
+/// Regel: `Ok` überschreibt immer (neue Daten). `Err` überschreibt auch —
+/// es entsteht nur bei einer **erfolgreichen** Antwort, in der genau dieser
+/// Wert fehlt (→ „—“). Fehlgeschlagene *Gruppen* liefern von `fetch_values`
+/// gar keine Einträge, dadurch bleiben die alten Werte bei Verbindungs-/API-
+/// Fehlern unangetastet.
+///
+/// Rückgabe: `true`, wenn mindestens ein neuer Wert übernommen wurde —
+/// nur dann läuft die „Aktualisiert“-Uhr weiter.
+pub fn merge_fetched(values: &mut ValueMap, results: Vec<(ValueId, Result<f64, ()>)>) -> bool {
+    let mut any = false;
+    for (id, r) in results {
+        any |= r.is_ok();
+        values.insert(id, r);
+    }
+    any
+}
+
 /// Holt alle angewählten Werte parallel; leerer instance_url → default-Instanz.
 async fn fetch_all(cfg: AppConfig) -> Vec<(ValueId, Result<f64, ()>)> {
     if cfg.values.is_empty() {
@@ -331,10 +350,9 @@ impl cosmic::Application for BitcoinApplet {
                 Task::none()
             }
             Message::Fetched(results) => {
-                for (id, r) in results {
-                    self.values.insert(id, r);
+                if crate::applet::merge_fetched(&mut self.values, results) {
+                    self.last_updated_unix = Some(chrono::Utc::now().timestamp());
                 }
-                self.last_updated_unix = Some(chrono::Utc::now().timestamp());
                 let interval = crate::config::refresh_interval(&self.cfg);
                 Task::perform(tokio::time::sleep(interval), move |_| {
                     cosmic::Action::App(Message::Tick)

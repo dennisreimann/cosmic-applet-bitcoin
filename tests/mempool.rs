@@ -129,3 +129,60 @@ fn format_difficulty_date_locale_and_german_style() {
     let s = mempool::format_value_lang(false, "diff:date", 1793301079.205);
     assert!(s.contains("2026"), "en-Format: {s}");
 }
+
+#[tokio::test]
+async fn fetch_values_group_failure_yields_no_entries() {
+    // 500 auf der Preis-Gruppe: KEINE price:-Einträge (alte Werte bleiben
+    // im Applet erhalten), Fees/height unangetastet angefragt.
+    let server = httpmock::MockServer::start();
+    server.mock(|when, then| {
+        when.method(httpmock::Method::GET).path("/api/v1/prices");
+        then.status(500);
+    });
+
+    let vals =
+        mempool::fetch_values(&server.base_url(), &["price:EUR".into(), "price:USD".into()])
+            .await;
+    assert!(vals.is_empty(), "Gruppenfehler darf keine Einträge liefern: {vals:?}");
+}
+
+#[tokio::test]
+async fn fetch_values_invalid_body_yields_no_entries() {
+    // Ungültiges JSON ist auch "keine neuen Daten" → keine Einträge.
+    let server = httpmock::MockServer::start();
+    server.mock(|when, then| {
+        when.method(httpmock::Method::GET).path("/api/v1/prices");
+        then.status(200).body("<html>kaputt</html>");
+    });
+
+    let vals = mempool::fetch_values(&server.base_url(), &["price:EUR".into()]).await;
+    assert!(vals.is_empty(), "{vals:?}");
+}
+
+#[tokio::test]
+async fn fetch_values_missing_currency_is_err_within_ok_group() {
+    // Request ok, einzelne Währung fehlt in der Antwort → Err für genau
+    // diesen Wert (Platzhalter), Ok für die gelieferten.
+    let server = httpmock::MockServer::start();
+    server.mock(|when, then| {
+        when.method(httpmock::Method::GET).path("/api/v1/prices");
+        then.status(200).body(r#"{"time":1,"USD":80221}"#);
+    });
+
+    let vals = mempool::fetch_values(
+        &server.base_url(),
+        &["price:USD".into(), "price:EUR".into()],
+    )
+    .await;
+    let mut usd = None;
+    let mut eur = None;
+    for (id, r) in vals {
+        match id.as_str() {
+            "price:USD" => usd = Some(r),
+            "price:EUR" => eur = Some(r),
+            _ => {}
+        }
+    }
+    assert_eq!(usd, Some(Ok(80221.0)));
+    assert!(eur.as_ref().is_some_and(|r| r.is_err()), "fehlende Währung → Err");
+}

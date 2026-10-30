@@ -305,130 +305,87 @@ async fn get_text(base_url: &str, path: &str) -> Result<String, String> {
 /// Holt die angewählten Werte parallel — nur der jeweils nötige Endpunkt
 /// je ID-Gruppe: Preise einmal für alle `price:*`, Fees einmal für
 /// `fee:*`, Blockhöhe einmal.
-pub async fn fetch_values(base_url: &str, ids: &[ValueId]) -> Vec<(ValueId, Result<f64, String>)> {
-    let prices_ids: Vec<ValueId> = ids
-        .iter()
-        .filter(|id| id.starts_with("price:"))
-        .cloned()
-        .collect();
-    let fees_ids: Vec<ValueId> = ids
-        .iter()
-        .filter(|id| id.starts_with("fee:"))
-        .cloned()
-        .collect();
-    let height_ids: Vec<ValueId> = ids
-        .iter()
-        .filter(|id| id.as_str() == "block:height")
-        .cloned()
-        .collect();
-    let diff_ids: Vec<ValueId> = ids
-        .iter()
-        .filter(|id| id.starts_with("diff:"))
-        .cloned()
-        .collect();
+/// Parst `/api/v1/prices` in eine `price:<CODE> → f64`-Map.
+fn parse_prices_map(body: &[u8]) -> Result<BTreeMap<ValueId, f64>, String> {
+    Ok(parse_prices(body)?
+        .into_iter()
+        .map(|(c, v)| (format!("price:{c}"), v))
+        .collect())
+}
 
-    let base_prices = base_url.trim_end_matches('/').to_string();
-    let base = base_prices.clone();
-    let prices_fut = async move {
-        if prices_ids.is_empty() {
-            return None;
-        }
-        Some(
-            get_text(&base, "api/v1/prices")
-                .await
-                .and_then(|t| parse_prices(t.as_bytes()))
-                .map(|prices| {
-                    let map: BTreeMap<ValueId, f64> = prices
-                        .into_iter()
-                        .map(|(c, v)| (format!("price:{c}"), v))
-                        .collect();
-                    prices_ids
-                        .iter()
-                        .map(|id| {
-                            (
-                                id.clone(),
-                                map.get(id)
-                                    .copied()
-                                    .ok_or_else(|| "währung fehlt in Antwort".to_string()),
-                            )
-                        })
-                        .collect::<Vec<_>>()
-                })
-                .unwrap_or_else(|e| prices_ids.iter().map(|id| (id.clone(), Err(e.clone()))).collect()),
-        )
+/// Parst `/api/blocks/tip/height` in eine Eintrag-Map.
+fn parse_height_map(body: &[u8]) -> Result<BTreeMap<ValueId, f64>, String> {
+    Ok(BTreeMap::from([(
+        "block:height".to_string(),
+        parse_height(body)? as f64,
+    )]))
+}
+
+/// Führt eine Wertegruppe aus: fragt den Endpunkt ab, parst die Antwort und
+/// liefert Einträge für die angefragten IDs.
+///
+/// `None` = Gruppe nicht angefragt **oder** fehlgeschlagen (Netzwerk, 5xx,
+/// ungültiges JSON) — das Applet behält in dem Fall die alten Werte. Ein
+/// `Err` in der Liste bedeutet dagegen: Antwort ok, aber genau dieser Wert
+/// fehlte darin (→ „—“-Platzhalter).
+async fn fetch_group<F>(
+    base_url: &str,
+    path: &str,
+    ids: &[ValueId],
+    parse: F,
+) -> Option<Vec<(ValueId, Result<f64, String>)>>
+where
+    F: FnOnce(&[u8]) -> Result<BTreeMap<ValueId, f64>, String>,
+{
+    if ids.is_empty() {
+        return None;
+    }
+    let body = get_text(base_url, path).await.ok()?;
+    let map = parse(body.as_bytes()).ok()?;
+    Some(
+        ids.iter()
+            .map(|id| {
+                (
+                    id.clone(),
+                    map.get(id)
+                        .copied()
+                        .ok_or_else(|| "wert fehlt in antwort".to_string()),
+                )
+            })
+            .collect(),
+    )
+}
+
+/// Holt die angewählten Werte parallel — pro ID-Gruppe nur der jeweils
+/// nötige Endpunkt: Preise einmal für alle `price:*`, Fees einmal für
+/// `fee:*`, Blockhöhe und Difficulty-Adjustment je einmal.
+pub async fn fetch_values(
+    base_url: &str,
+    ids: &[ValueId],
+) -> Vec<(ValueId, Result<f64, String>)> {
+    let base = base_url.trim_end_matches('/');
+    let group = |prefix: &str| -> Vec<ValueId> {
+        ids.iter()
+            .filter(|id| id.starts_with(prefix))
+            .cloned()
+            .collect()
     };
-    let base = base_prices.clone();
-    let fees_fut = async move {
-        if fees_ids.is_empty() {
-            return None;
-        }
-        Some(
-            get_text(&base, "api/v1/fees/precise")
-                .await
-                .and_then(|t| parse_fees(t.as_bytes()))
-                .map(|fees| {
-                    fees_ids
-                        .iter()
-                        .map(|id| {
-                            (
-                                id.clone(),
-                                fees.get(id)
-                                    .copied()
-                                    .ok_or_else(|| "tier fehlt in Antwort".to_string()),
-                            )
-                        })
-                        .collect::<Vec<_>>()
-                })
-                .unwrap_or_else(|e| fees_ids.iter().map(|id| (id.clone(), Err(e.clone()))).collect()),
-        )
-    };
-    let base = base_prices.clone();
-    let diff_fut = async move {
-        if diff_ids.is_empty() {
-            return None;
-        }
-        Some(
-            get_text(&base, "api/v1/difficulty-adjustment")
-                .await
-                .and_then(|t| parse_difficulty(t.as_bytes()))
-                .map(|diff_map| {
-                    diff_ids
-                        .iter()
-                        .map(|id| {
-                            (
-                                id.clone(),
-                                diff_map
-                                    .get(id)
-                                    .copied()
-                                    .ok_or_else(|| "feld fehlt in Antwort".to_string()),
-                            )
-                        })
-                        .collect::<Vec<_>>()
-                })
-                .unwrap_or_else(|e| diff_ids.iter().map(|id| (id.clone(), Err(e.clone()))).collect()),
-        )
-    };
-    let base = base_prices.clone();
-    let height_fut = async move {
-        if height_ids.is_empty() {
-            return None;
-        }
-        Some(
-            get_text(&base, "api/blocks/tip/height")
-                .await
-                .and_then(|t| parse_height(t.as_bytes()))
-                .map(|h| vec![(height_ids[0].clone(), Ok(h as f64))])
-                .unwrap_or_else(|e| height_ids.iter().map(|id| (id.clone(), Err(e.clone()))).collect()),
-        )
-    };
+    let prices_ids = group("price:");
+    let fees_ids = group("fee:");
+    let height_ids = group("block:");
+    let diff_ids = group("diff:");
 
     let (prices, fees, height, diff) = futures_util::future::join4(
-        prices_fut, fees_fut, height_fut, diff_fut,
+        fetch_group(base, "api/v1/prices", &prices_ids, parse_prices_map),
+        fetch_group(base, "api/v1/fees/precise", &fees_ids, parse_fees),
+        fetch_group(base, "api/blocks/tip/height", &height_ids, parse_height_map),
+        fetch_group(base, "api/v1/difficulty-adjustment", &diff_ids, parse_difficulty),
     )
     .await;
-    let mut out: Vec<(ValueId, Result<f64, String>)> = Vec::new();
-    for part in [prices, fees, height, diff] {
-        out.extend(part.unwrap_or_default());
-    }
-    out
+
+    [prices, fees, height, diff]
+        .into_iter()
+        .flatten()
+        .flatten()
+        .collect()
 }
