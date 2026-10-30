@@ -63,17 +63,17 @@ jobs:
       - name: Install script packaging
         run: |
           mkdir -p dist
-          cp target/release/cosmic-applet-homeassistant dist/
-          cp data/net.d11n.CosmicHomeassistant.desktop dist/
+          cp target/release/cosmic-applet-bitcoin dist/
+          cp data/net.d11n.CosmicBitcoin.desktop dist/
           cp install.sh dist/
           chmod +x dist/install.sh
-          tar -C dist -czf cosmic-applet-homeassistant-linux-x86_64.tar.gz .
+          tar -C dist -czf cosmic-applet-bitcoin-linux-x86_64.tar.gz .
 
       - name: Upload artifact
         uses: actions/upload-artifact@v7
         with:
-          name: cosmic-applet-homeassistant-linux-x86_64
-          path: cosmic-applet-homeassistant-linux-x86_64.tar.gz
+          name: cosmic-applet-bitcoin-linux-x86_64
+          path: cosmic-applet-bitcoin-linux-x86_64.tar.gz
           if-no-files-found: error
 
   release:
@@ -87,22 +87,22 @@ jobs:
       - name: Download artifact
         uses: actions/download-artifact@v8
         with:
-          name: cosmic-applet-homeassistant-linux-x86_64
+          name: cosmic-applet-bitcoin-linux-x86_64
           path: artifacts
 
       - name: Create release
         uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ github.ref_name }}
-          name: cosmic-applet-homeassistant ${{ github.ref_name }}
+          name: cosmic-applet-bitcoin ${{ github.ref_name }}
           body: |
-            Native COSMIC panel applet showing configurable Home Assistant entities.
+            Native COSMIC panel applet showing configurable Bitcoin entities.
 
             ## Install
             ```
-            tar -xzf cosmic-applet-homeassistant-linux-x86_64.tar.gz
+            tar -xzf cosmic-applet-bitcoin-linux-x86_64.tar.gz
             ./install.sh
             ```
-            Then add the "Home Assistant" applet in COSMIC Panel settings.
-          files: artifacts/cosmic-applet-homeassistant-linux-x86_64.tar.gz
+            Then add the "Bitcoin" applet in COSMIC Panel settings.
+          files: artifacts/cosmic-applet-bitcoin-linux-x86_64.tar.gz
           draft: false

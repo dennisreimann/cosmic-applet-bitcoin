@@ -4,10 +4,9 @@ Guidelines and context for AI agents working on this repository.
 
 ## Project
 
-**cosmic-applet-bitcoin** — A native COSMIC panel applet (fork of the
-author's `cosmic-applet-homeassistant`) that displays configurable
-[mempool.space](https://mempool.space/) values in the panel: BTC prices
-per currency, fee estimates and the current block height.
+**cosmic-applet-bitcoin** — A native COSMIC panel applet that displays
+configurable [mempool.space](https://mempool.space/) values in the panel:
+BTC prices per currency, fee estimates and the current block height.
 
 ## Architecture (inherited from the source project)
 
