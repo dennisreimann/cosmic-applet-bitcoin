@@ -66,3 +66,6 @@ BTC prices per currency, fee estimates and the current block height.
   `~/.local/share/...`).
 - `./restart-applet.sh` toggles the panel entry for a hot reload
   (`~/.config/cosmic/com.system76.CosmicPanel.Panel/v1/plugins_wings`).
+- Before a release: update dependencies to the latest versions
+  (`cargo update` in Cargo.lock; check for available major bumps in
+  `Cargo.toml`), then run the full test suite and clippy again.
