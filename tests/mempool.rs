@@ -28,6 +28,59 @@ fn parse_fees_maps_tiers() {
     assert_eq!(fees.get("fee:unknown"), None);
 }
 
+#[tokio::test]
+async fn fetch_values_falls_back_to_fees_recommended() {
+    // Alte Mempool-Instanz: /precise existiert nicht (404), /recommended
+    // liefert dieselben Keys nur als Ganzzahlen → Fallback greift.
+    let server = httpmock::MockServer::start();
+    server.mock(|when, then| {
+        when.method(httpmock::Method::GET).path("/api/v1/fees/precise");
+        then.status(404);
+    });
+    server.mock(|when, then| {
+        when.method(httpmock::Method::GET).path("/api/v1/fees/recommended");
+        then.status(200).body(
+            r#"{"fastestFee":21,"halfHourFee":18,"hourFee":14,"economyFee":9,"minimumFee":5}"#,
+        );
+    });
+
+    let vals = mempool::fetch_values(
+        &server.base_url(),
+        &["fee:fastest".into(), "fee:minimum".into()],
+    )
+    .await;
+    let got: HashMap<_, _> = vals
+        .iter()
+        .map(|(id, r)| (id.clone(), r.clone().map_err(|_| ())))
+        .collect();
+    assert_eq!(got.get("fee:fastest"), Some(&Ok(21.0)), "{got:?}");
+    assert_eq!(got.get("fee:minimum"), Some(&Ok(5.0)), "{got:?}");
+}
+
+#[tokio::test]
+async fn fetch_values_prefers_fees_precise_over_recommended() {
+    // Neue Instanz: /precise antwortet → /recommended wird nicht gebraucht.
+    let server = httpmock::MockServer::start();
+    server.mock(|when, then| {
+        when.method(httpmock::Method::GET).path("/api/v1/fees/precise");
+        then.status(200).body(
+            r#"{"fastestFee":2.909,"halfHourFee":1.519,"hourFee":0.698,"economyFee":0.2,"minimumFee":0.1}"#,
+        );
+    });
+    server.mock(|when, then| {
+        when.method(httpmock::Method::GET).path("/api/v1/fees/recommended");
+        then.status(500);
+    });
+
+    let vals =
+        mempool::fetch_values(&server.base_url(), &["fee:fastest".into()]).await;
+    let got: HashMap<_, _> = vals
+        .iter()
+        .map(|(id, r)| (id.clone(), r.clone().map_err(|_| ())))
+        .collect();
+    assert_eq!(got.get("fee:fastest"), Some(&Ok(2.909)), "{got:?}");
+}
+
 #[test]
 fn parse_height_integer_body() {
     assert_eq!(mempool::parse_height(b"973692").unwrap(), 973692);

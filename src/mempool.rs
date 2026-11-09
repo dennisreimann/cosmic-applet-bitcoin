@@ -356,6 +356,22 @@ where
     )
 }
 
+/// Holt Fees: `/api/v1/fees/precise`, bei Fehlschlag (ältere Mempool-
+/// Versionen haben den Endpunkt nicht) Fallback auf `/api/v1/fees/recommended`
+/// — dieselben Keys, nur als Ganzzahlen; `parse_fees` kann beides lesen.
+async fn fetch_fees(
+    base_url: &str,
+    ids: &[ValueId],
+) -> Option<Vec<(ValueId, Result<f64, String>)>> {
+    if ids.is_empty() {
+        return None;
+    }
+    if let Some(values) = fetch_group(base_url, "api/v1/fees/precise", ids, parse_fees).await {
+        return Some(values);
+    }
+    fetch_group(base_url, "api/v1/fees/recommended", ids, parse_fees).await
+}
+
 /// Holt die angewählten Werte parallel — pro ID-Gruppe nur der jeweils
 /// nötige Endpunkt: Preise einmal für alle `price:*`, Fees einmal für
 /// `fee:*`, Blockhöhe und Difficulty-Adjustment je einmal.
@@ -377,7 +393,7 @@ pub async fn fetch_values(
 
     let (prices, fees, height, diff) = futures_util::future::join4(
         fetch_group(base, "api/v1/prices", &prices_ids, parse_prices_map),
-        fetch_group(base, "api/v1/fees/precise", &fees_ids, parse_fees),
+        fetch_fees(base, &fees_ids),
         fetch_group(base, "api/blocks/tip/height", &height_ids, parse_height_map),
         fetch_group(base, "api/v1/difficulty-adjustment", &diff_ids, parse_difficulty),
     )
