@@ -13,6 +13,25 @@ fn fractional_prices_have_one_localized_decimal_separator() {
     );
 }
 
+#[tokio::test]
+async fn group_failures_have_errors_and_preserve_known_values() {
+    let server = httpmock::MockServer::start();
+    server.mock(|when, then| {
+        when.method(httpmock::Method::GET).path("/api/v1/prices");
+        then.status(500);
+    });
+    let vals = mempool::fetch_values(&server.base_url(), &["price:EUR".into()]).await;
+    assert!(vals.values.is_empty());
+    assert_eq!(vals.errors.len(), 1);
+    assert!(vals.errors[0].contains("500"));
+    let mut previous = HashMap::from([("price:EUR".to_string(), Ok::<f64, ()>(71_784.0))]);
+    assert!(!cosmic_applet_bitcoin::applet::merge_fetched(
+        &mut previous,
+        vals.values
+    ));
+    assert_eq!(previous.get("price:EUR"), Some(&Ok(71_784.0)));
+}
+
 #[test]
 fn parse_prices_skips_time_and_sorts_by_code() {
     let body = br#"{"time":1793278509,"USD":79941,"EUR":71784,"CHF":66196,"JPY":12646148}"#;
@@ -64,6 +83,7 @@ async fn fetch_values_falls_back_to_fees_recommended() {
     )
     .await;
     let got: HashMap<_, _> = vals
+        .values
         .iter()
         .map(|(id, r)| (id.clone(), r.clone().map_err(|_| ())))
         .collect();
@@ -89,6 +109,7 @@ async fn fetch_values_prefers_fees_precise_over_recommended() {
 
     let vals = mempool::fetch_values(&server.base_url(), &["fee:fastest".into()]).await;
     let got: HashMap<_, _> = vals
+        .values
         .iter()
         .map(|(id, r)| (id.clone(), r.clone().map_err(|_| ())))
         .collect();
@@ -142,6 +163,7 @@ async fn fetch_values_hits_only_needed_endpoints() {
     )
     .await;
     let got: HashMap<_, _> = vals
+        .values
         .iter()
         .map(|(id, r)| (id.clone(), r.clone().map_err(|_| ())))
         .collect::<std::collections::HashMap<String, Result<f64, ()>>>();
@@ -255,7 +277,7 @@ async fn fetch_values_group_failure_yields_no_entries() {
     )
     .await;
     assert!(
-        vals.is_empty(),
+        vals.values.is_empty(),
         "Gruppenfehler darf keine Einträge liefern: {vals:?}"
     );
 }
@@ -270,7 +292,7 @@ async fn fetch_values_invalid_body_yields_no_entries() {
     });
 
     let vals = mempool::fetch_values(&server.base_url(), &["price:EUR".into()]).await;
-    assert!(vals.is_empty(), "{vals:?}");
+    assert!(vals.values.is_empty(), "{vals:?}");
 }
 
 #[tokio::test]
@@ -290,7 +312,7 @@ async fn fetch_values_missing_currency_is_err_within_ok_group() {
     .await;
     let mut usd = None;
     let mut eur = None;
-    for (id, r) in vals {
+    for (id, r) in vals.values {
         match id.as_str() {
             "price:USD" => usd = Some(r),
             "price:EUR" => eur = Some(r),

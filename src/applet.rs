@@ -1,11 +1,12 @@
 use crate::config::{AppConfig, ValueId};
 use crate::fl;
 use crate::mempool;
+use crate::refresh::RefreshFlow;
 use chrono::{DateTime, Local};
 use cosmic::app::{Core, Task};
 use cosmic::cosmic_theme::Spacing;
 use cosmic::iced::platform_specific::shell::wayland::commands::popup::{destroy_popup, get_popup};
-use cosmic::iced::{widget::svg, Alignment, Length, Rectangle, window};
+use cosmic::iced::{widget::svg, window, Alignment, Length, Rectangle};
 use cosmic::widget::{autosize, button, column, container, divider, row, text, Id};
 use cosmic::{applet, theme, Element};
 use std::collections::HashMap;
@@ -25,11 +26,7 @@ pub fn format_panel_line(values: &ValueMap, selected: &[ValueId]) -> String {
 }
 
 /// Panel-Zeile mit expliziter Sprachauswahl (deterministisch testbar).
-pub fn format_panel_line_lang(
-    is_de: bool,
-    values: &ValueMap,
-    selected: &[ValueId],
-) -> String {
+pub fn format_panel_line_lang(is_de: bool, values: &ValueMap, selected: &[ValueId]) -> String {
     selected
         .iter()
         .map(|id| match values.get(id) {
@@ -119,20 +116,21 @@ pub fn merge_fetched(values: &mut ValueMap, results: Vec<(ValueId, Result<f64, (
 }
 
 /// Holt alle angewählten Werte parallel; leerer instance_url → default-Instanz.
-async fn fetch_all(cfg: AppConfig) -> Vec<(ValueId, Result<f64, ()>)> {
+pub type FetchResponse = mempool::FetchResponse;
+
+async fn fetch_all(cfg: AppConfig) -> mempool::FetchResponse {
     if cfg.values.is_empty() {
-        return vec![];
+        return mempool::FetchResponse {
+            values: vec![],
+            errors: vec![],
+        };
     }
     let base = if cfg.instance_url.is_empty() {
         mempool::DEFAULT_INSTANCE.to_string()
     } else {
         cfg.instance_url.clone()
     };
-    mempool::fetch_values(&base, &cfg.values)
-        .await
-        .into_iter()
-        .map(|(id, r)| (id, r.map_err(|_| ())))
-        .collect()
+    mempool::fetch_values(&base, &cfg.values).await
 }
 
 /// Wartet, bis sich die Config-Datei ändert (mtime), und liefert dann die
@@ -167,7 +165,10 @@ pub fn sibling_binary(exe_path: &str, name: &str) -> String {
 /// Path of the settings binary next to the running applet binary.
 pub fn settings_binary_path() -> Option<String> {
     let exe = std::env::current_exe().ok()?;
-    Some(sibling_binary(&exe.to_string_lossy(), "cosmic-applet-bitcoin-settings"))
+    Some(sibling_binary(
+        &exe.to_string_lossy(),
+        "cosmic-applet-bitcoin-settings",
+    ))
 }
 
 /// Startet das Applet (aufgerufen aus `main`).
@@ -180,8 +181,8 @@ pub enum Message {
     /// Button-Bounds (in Fenster-Koordinaten) für die Popup-Positionierung.
     TogglePopup(Rectangle),
     PopupClosed(window::Id),
-    Fetched(Vec<(ValueId, Result<f64, ()>)>),
-    Tick,
+    Fetched(u64, FetchResponse),
+    Tick(u64),
     // Config-Datei hat sich geändert (Settings-Fenster hat gespeichert).
     ConfigChanged(Option<std::time::SystemTime>),
     OpenSettings,
@@ -198,6 +199,8 @@ pub struct BitcoinApplet {
     config_mtime: Option<std::time::SystemTime>,
     /// Letzter abgeschlossener Fetch-Cycle (Unix-Sekunden).
     last_updated_unix: Option<i64>,
+    flow: RefreshFlow,
+    errors: Vec<String>,
 }
 
 fn panel_element(state: &BitcoinApplet) -> Element<'_, Message> {
@@ -254,6 +257,12 @@ fn popup_element(state: &BitcoinApplet) -> Element<'_, Message> {
     col = col.push(head);
 
     col = col.push(container(divider::horizontal::default()).padding([space_xxs, 0]));
+    if !state.errors.is_empty() {
+        col = col.push(
+            container(text::body(fl!("fetch-error", e = state.errors.join("; "))))
+                .padding([0, space_m]),
+        );
+    }
 
     // Werte-Zeilen (Name links, Wert rechts).
     let rows = popup_rows(&state.values, &state.cfg.values);
@@ -272,7 +281,8 @@ fn popup_element(state: &BitcoinApplet) -> Element<'_, Message> {
     // Trennlinie direkt über der Beenden-Zeile: kein unteres Padding,
     // damit der Abstand zur Menü-Zeile nicht zu groß wird.
     col = col.push(container(divider::horizontal::default()).padding([space_xxs, 0, 0, 0]));
-    col = col.push(applet::menu_button(text::body(fl!("settings"))).on_press(Message::OpenSettings));
+    col =
+        col.push(applet::menu_button(text::body(fl!("settings"))).on_press(Message::OpenSettings));
     col = col.push(applet::menu_button(text::body(fl!("quit"))).on_press(Message::Quit));
     container(col).into()
 }
@@ -291,14 +301,17 @@ impl cosmic::Application for BitcoinApplet {
             values: ValueMap::new(),
             config_mtime: None,
             last_updated_unix: None,
+            flow: RefreshFlow::default(),
+            errors: Vec::new(),
         };
         app.cfg = crate::config::load();
         let cfg = app.cfg.clone();
+        let generation = app.flow.start();
         (
             app,
             Task::batch(vec![
-                Task::perform(fetch_all(cfg), |r| {
-                    cosmic::Action::App(Message::Fetched(r))
+                Task::perform(fetch_all(cfg), move |response| {
+                    cosmic::Action::App(Message::Fetched(generation, response))
                 }),
                 Task::perform(wait_for_config_change(None), |t| {
                     cosmic::Action::App(Message::ConfigChanged(t))
@@ -349,49 +362,57 @@ impl cosmic::Application for BitcoinApplet {
                 }
                 Task::none()
             }
-            Message::Fetched(results) => {
-                if crate::applet::merge_fetched(&mut self.values, results) {
+            Message::Fetched(generation, response) => {
+                if !self.flow.accept_finished(generation) {
+                    return Task::none();
+                }
+                self.flow.finished(generation);
+                self.errors = response.errors;
+                if crate::applet::merge_fetched(&mut self.values, response.values) {
                     self.last_updated_unix = Some(chrono::Utc::now().timestamp());
                 }
                 let interval = crate::config::refresh_interval(&self.cfg);
                 Task::perform(tokio::time::sleep(interval), move |_| {
-                    cosmic::Action::App(Message::Tick)
+                    cosmic::Action::App(Message::Tick(generation))
                 })
             }
-            Message::Tick => {
+            Message::Tick(generation) => {
+                if !self.flow.tick(generation) {
+                    return Task::none();
+                }
                 let cfg = self.cfg.clone();
-                Task::perform(fetch_all(cfg), |r| {
-                    cosmic::Action::App(Message::Fetched(r))
+                let generation = self.flow.start();
+                Task::perform(fetch_all(cfg), move |response| {
+                    cosmic::Action::App(Message::Fetched(generation, response))
                 })
             }
             Message::ConfigChanged(mtime) => {
                 self.config_mtime = mtime;
                 self.cfg = crate::config::load();
                 let cfg = self.cfg.clone();
+                let generation = self.flow.start();
                 Task::batch(vec![
-                    Task::perform(fetch_all(cfg), |r| {
-                        cosmic::Action::App(Message::Fetched(r))
+                    Task::perform(fetch_all(cfg), move |response| {
+                        cosmic::Action::App(Message::Fetched(generation, response))
                     }),
                     Task::perform(wait_for_config_change(mtime), |t| {
                         cosmic::Action::App(Message::ConfigChanged(t))
                     }),
                 ])
             }
-            Message::OpenSettings => {
-                match crate::applet::settings_binary_path() {
-                    Some(path) => {
-                        let child = std::process::Command::new(path).spawn();
-                        if let Err(e) = child {
-                            tracing::error!("Settings-Fenster starten: {e}");
-                        }
-                        Task::none()
+            Message::OpenSettings => match crate::applet::settings_binary_path() {
+                Some(path) => {
+                    let child = std::process::Command::new(path).spawn();
+                    if let Err(e) = child {
+                        tracing::error!("Settings-Fenster starten: {e}");
                     }
-                    None => {
-                        tracing::error!("Settings-Binary nicht gefunden");
-                        Task::none()
-                    }
+                    Task::none()
                 }
-            }
+                None => {
+                    tracing::error!("Settings-Binary nicht gefunden");
+                    Task::none()
+                }
+            },
             Message::Quit => {
                 std::process::exit(0);
             }
@@ -420,10 +441,7 @@ impl cosmic::Application for BitcoinApplet {
     }
 
     fn view_window(&self, _id: window::Id) -> Element<'_, Message> {
-        self.core
-            .applet
-            .popup_container(popup_element(self))
-            .into()
+        self.core.applet.popup_container(popup_element(self)).into()
     }
 
     fn on_close_requested(&self, id: window::Id) -> Option<Message> {

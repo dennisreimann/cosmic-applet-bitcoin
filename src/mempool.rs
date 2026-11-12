@@ -272,16 +272,16 @@ const TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 
 /// Holt die Währungen von `/api/v1/prices` (für den Settings-Katalog).
 pub async fn fetch_prices(base_url: &str) -> Result<Vec<(String, f64)>, String> {
-    let t = get_text(base_url, "api/v1/prices").await?;
-    parse_prices(t.as_bytes())
-}
-
-async fn get_text(base_url: &str, path: &str) -> Result<String, String> {
-    let url = format!("{}/{}", base_url.trim_end_matches('/'), path);
     let client = reqwest::Client::builder()
         .timeout(TIMEOUT)
         .build()
         .map_err(|e| format!("HTTP-Client: {e}"))?;
+    let t = get_text(&client, base_url, "api/v1/prices").await?;
+    parse_prices(t.as_bytes())
+}
+
+async fn get_text(client: &reqwest::Client, base_url: &str, path: &str) -> Result<String, String> {
+    let url = format!("{}/{}", base_url.trim_end_matches('/'), path);
     let resp = client
         .get(&url)
         .send()
@@ -320,54 +320,71 @@ fn parse_height_map(body: &[u8]) -> Result<BTreeMap<ValueId, f64>, String> {
 /// ungültiges JSON) — das Applet behält in dem Fall die alten Werte. Ein
 /// `Err` in der Liste bedeutet dagegen: Antwort ok, aber genau dieser Wert
 /// fehlte darin (→ „—“-Platzhalter).
+/// A group error leaves existing values untouched. Missing values in a
+/// successful response are the only time an `Err` is inserted in the map.
+#[derive(Debug, Clone, Default)]
+pub struct FetchResponse {
+    pub values: Vec<(ValueId, Result<f64, ()>)>,
+    pub errors: Vec<String>,
+}
+
+type GroupResponse = Option<Result<Vec<(ValueId, Result<f64, ()>)>, String>>;
+
 async fn fetch_group<F>(
+    client: &reqwest::Client,
     base_url: &str,
     path: &str,
     ids: &[ValueId],
     parse: F,
-) -> Option<Vec<(ValueId, Result<f64, String>)>>
+) -> GroupResponse
 where
     F: FnOnce(&[u8]) -> Result<BTreeMap<ValueId, f64>, String>,
 {
     if ids.is_empty() {
         return None;
     }
-    let body = get_text(base_url, path).await.ok()?;
-    let map = parse(body.as_bytes()).ok()?;
     Some(
-        ids.iter()
-            .map(|id| {
-                (
-                    id.clone(),
-                    map.get(id)
-                        .copied()
-                        .ok_or_else(|| "wert fehlt in antwort".to_string()),
-                )
-            })
-            .collect(),
+        async {
+            let body = get_text(client, base_url, path).await?;
+            let map = parse(body.as_bytes())?;
+            Ok(ids
+                .iter()
+                .map(|id| (id.clone(), map.get(id).copied().ok_or(())))
+                .collect())
+        }
+        .await,
     )
 }
 
 /// Holt Fees: `/api/v1/fees/precise`, bei Fehlschlag (ältere Mempool-
 /// Versionen haben den Endpunkt nicht) Fallback auf `/api/v1/fees/recommended`
 /// — dieselben Keys, nur als Ganzzahlen; `parse_fees` kann beides lesen.
-async fn fetch_fees(
-    base_url: &str,
-    ids: &[ValueId],
-) -> Option<Vec<(ValueId, Result<f64, String>)>> {
+async fn fetch_fees(client: &reqwest::Client, base_url: &str, ids: &[ValueId]) -> GroupResponse {
     if ids.is_empty() {
         return None;
     }
-    if let Some(values) = fetch_group(base_url, "api/v1/fees/precise", ids, parse_fees).await {
-        return Some(values);
+    let exact = fetch_group(client, base_url, "api/v1/fees/precise", ids, parse_fees).await?;
+    if exact.is_ok() {
+        return Some(exact);
     }
-    fetch_group(base_url, "api/v1/fees/recommended", ids, parse_fees).await
+    let recommended =
+        fetch_group(client, base_url, "api/v1/fees/recommended", ids, parse_fees).await?;
+    Some(recommended.or(exact))
 }
 
 /// Holt die angewählten Werte parallel — pro ID-Gruppe nur der jeweils
 /// nötige Endpunkt: Preise einmal für alle `price:*`, Fees einmal für
 /// `fee:*`, Blockhöhe und Difficulty-Adjustment je einmal.
-pub async fn fetch_values(base_url: &str, ids: &[ValueId]) -> Vec<(ValueId, Result<f64, String>)> {
+pub async fn fetch_values(base_url: &str, ids: &[ValueId]) -> FetchResponse {
+    let client = match reqwest::Client::builder().timeout(TIMEOUT).build() {
+        Ok(client) => client,
+        Err(error) => {
+            return FetchResponse {
+                values: Vec::new(),
+                errors: vec![format!("HTTP-Client: {error}")],
+            };
+        }
+    };
     let base = base_url.trim_end_matches('/');
     let group = |prefix: &str| -> Vec<ValueId> {
         ids.iter()
@@ -381,10 +398,23 @@ pub async fn fetch_values(base_url: &str, ids: &[ValueId]) -> Vec<(ValueId, Resu
     let diff_ids = group("diff:");
 
     let (prices, fees, height, diff) = futures_util::future::join4(
-        fetch_group(base, "api/v1/prices", &prices_ids, parse_prices_map),
-        fetch_fees(base, &fees_ids),
-        fetch_group(base, "api/blocks/tip/height", &height_ids, parse_height_map),
         fetch_group(
+            &client,
+            base,
+            "api/v1/prices",
+            &prices_ids,
+            parse_prices_map,
+        ),
+        fetch_fees(&client, base, &fees_ids),
+        fetch_group(
+            &client,
+            base,
+            "api/blocks/tip/height",
+            &height_ids,
+            parse_height_map,
+        ),
+        fetch_group(
+            &client,
             base,
             "api/v1/difficulty-adjustment",
             &diff_ids,
@@ -393,9 +423,12 @@ pub async fn fetch_values(base_url: &str, ids: &[ValueId]) -> Vec<(ValueId, Resu
     )
     .await;
 
-    [prices, fees, height, diff]
-        .into_iter()
-        .flatten()
-        .flatten()
-        .collect()
+    let mut response = FetchResponse::default();
+    for group in [prices, fees, height, diff].into_iter().flatten() {
+        match group {
+            Ok(values) => response.values.extend(values),
+            Err(error) => response.errors.push(error),
+        }
+    }
+    response
 }
