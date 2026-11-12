@@ -1,5 +1,17 @@
-use std::collections::HashMap;
 use cosmic_applet_bitcoin::mempool;
+use std::collections::HashMap;
+
+#[test]
+fn fractional_prices_have_one_localized_decimal_separator() {
+    assert_eq!(
+        mempool::format_value_lang(true, "price:USD", 79941.23),
+        "79.941,23 $"
+    );
+    assert_eq!(
+        mempool::format_value_lang(false, "price:USD", 79941.23),
+        "$79,941.23"
+    );
+}
 
 #[test]
 fn parse_prices_skips_time_and_sorts_by_code() {
@@ -34,11 +46,13 @@ async fn fetch_values_falls_back_to_fees_recommended() {
     // liefert dieselben Keys nur als Ganzzahlen → Fallback greift.
     let server = httpmock::MockServer::start();
     server.mock(|when, then| {
-        when.method(httpmock::Method::GET).path("/api/v1/fees/precise");
+        when.method(httpmock::Method::GET)
+            .path("/api/v1/fees/precise");
         then.status(404);
     });
     server.mock(|when, then| {
-        when.method(httpmock::Method::GET).path("/api/v1/fees/recommended");
+        when.method(httpmock::Method::GET)
+            .path("/api/v1/fees/recommended");
         then.status(200).body(
             r#"{"fastestFee":21,"halfHourFee":18,"hourFee":14,"economyFee":9,"minimumFee":5}"#,
         );
@@ -68,12 +82,12 @@ async fn fetch_values_prefers_fees_precise_over_recommended() {
         );
     });
     server.mock(|when, then| {
-        when.method(httpmock::Method::GET).path("/api/v1/fees/recommended");
+        when.method(httpmock::Method::GET)
+            .path("/api/v1/fees/recommended");
         then.status(500);
     });
 
-    let vals =
-        mempool::fetch_values(&server.base_url(), &["fee:fastest".into()]).await;
+    let vals = mempool::fetch_values(&server.base_url(), &["fee:fastest".into()]).await;
     let got: HashMap<_, _> = vals
         .iter()
         .map(|(id, r)| (id.clone(), r.clone().map_err(|_| ())))
@@ -89,8 +103,14 @@ fn parse_height_integer_body() {
 
 #[test]
 fn format_block_height_still_space_separator() {
-    assert_eq!(mempool::format_value_lang(true, "block:height", 973692.0), "973 692");
-    assert_eq!(mempool::format_value_lang(false, "block:height", 973692.0), "973 692");
+    assert_eq!(
+        mempool::format_value_lang(true, "block:height", 973692.0),
+        "973 692"
+    );
+    assert_eq!(
+        mempool::format_value_lang(false, "block:height", 973692.0),
+        "973 692"
+    );
 }
 
 #[test]
@@ -111,13 +131,16 @@ async fn fetch_values_hits_only_needed_endpoints() {
         then.status(200).body(r#"{"time":1,"EUR":71784}"#);
     });
     server.mock(|when, then| {
-        when.method(httpmock::Method::GET).path("/api/blocks/tip/height");
+        when.method(httpmock::Method::GET)
+            .path("/api/blocks/tip/height");
         then.status(200).body("973692");
     });
 
-    let vals =
-        mempool::fetch_values(&server.base_url(), &["price:EUR".into(), "block:height".into()])
-            .await;
+    let vals = mempool::fetch_values(
+        &server.base_url(),
+        &["price:EUR".into(), "block:height".into()],
+    )
+    .await;
     let got: HashMap<_, _> = vals
         .iter()
         .map(|(id, r)| (id.clone(), r.clone().map_err(|_| ())))
@@ -152,26 +175,59 @@ fn known_value_ids_includes_difficulty() {
 
 #[test]
 fn format_price_german_locale_symbol_after() {
-    assert_eq!(mempool::format_value_lang(true, "price:EUR", 71784.0), "71.784 €");
-    assert_eq!(mempool::format_value_lang(true, "price:USD", 79941.0), "79.941 $");
-    assert_eq!(mempool::format_value_lang(true, "price:CHF", 66196.0), "66.196 Fr");
-    assert_eq!(mempool::format_value_lang(true, "price:JPY", 12646148.0), "12.646.148 ¥");
+    assert_eq!(
+        mempool::format_value_lang(true, "price:EUR", 71784.0),
+        "71.784 €"
+    );
+    assert_eq!(
+        mempool::format_value_lang(true, "price:USD", 79941.0),
+        "79.941 $"
+    );
+    assert_eq!(
+        mempool::format_value_lang(true, "price:CHF", 66196.0),
+        "66.196 Fr"
+    );
+    assert_eq!(
+        mempool::format_value_lang(true, "price:JPY", 12646148.0),
+        "12.646.148 ¥"
+    );
 }
 
 #[test]
 fn format_price_english_locale_symbol_before() {
-    assert_eq!(mempool::format_value_lang(false, "price:EUR", 71784.0), "€71,784");
-    assert_eq!(mempool::format_value_lang(false, "price:USD", 79941.0), "$79,941");
+    assert_eq!(
+        mempool::format_value_lang(false, "price:EUR", 71784.0),
+        "€71,784"
+    );
+    assert_eq!(
+        mempool::format_value_lang(false, "price:USD", 79941.0),
+        "$79,941"
+    );
 }
 
 #[test]
 fn format_difficulty_values_human_readable() {
-    assert_eq!(mempool::format_value_lang(true, "diff:progress", 98.264), "98,3 %");
-    assert_eq!(mempool::format_value_lang(false, "diff:progress", 98.264), "98.3%");
-    assert_eq!(mempool::format_value_lang(true, "diff:change", 5.5267), "+5,53 %");
-    assert_eq!(mempool::format_value_lang(false, "diff:change", -0.5), "-0.50%");
+    assert_eq!(
+        mempool::format_value_lang(true, "diff:progress", 98.264),
+        "98,3 %"
+    );
+    assert_eq!(
+        mempool::format_value_lang(false, "diff:progress", 98.264),
+        "98.3%"
+    );
+    assert_eq!(
+        mempool::format_value_lang(true, "diff:change", 5.5267),
+        "+5,53 %"
+    );
+    assert_eq!(
+        mempool::format_value_lang(false, "diff:change", -0.5),
+        "-0.50%"
+    );
     assert_eq!(mempool::format_value_lang(true, "diff:blocks", 35.0), "35");
-    assert_eq!(mempool::format_value_lang(true, "diff:blocks", 1112.0), "1.112");
+    assert_eq!(
+        mempool::format_value_lang(true, "diff:blocks", 1112.0),
+        "1.112"
+    );
 }
 
 #[test]
@@ -193,10 +249,15 @@ async fn fetch_values_group_failure_yields_no_entries() {
         then.status(500);
     });
 
-    let vals =
-        mempool::fetch_values(&server.base_url(), &["price:EUR".into(), "price:USD".into()])
-            .await;
-    assert!(vals.is_empty(), "Gruppenfehler darf keine Einträge liefern: {vals:?}");
+    let vals = mempool::fetch_values(
+        &server.base_url(),
+        &["price:EUR".into(), "price:USD".into()],
+    )
+    .await;
+    assert!(
+        vals.is_empty(),
+        "Gruppenfehler darf keine Einträge liefern: {vals:?}"
+    );
 }
 
 #[tokio::test]
@@ -237,5 +298,8 @@ async fn fetch_values_missing_currency_is_err_within_ok_group() {
         }
     }
     assert_eq!(usd, Some(Ok(80221.0)));
-    assert!(eur.as_ref().is_some_and(|r| r.is_err()), "fehlende Währung → Err");
+    assert!(
+        eur.as_ref().is_some_and(|r| r.is_err()),
+        "fehlende Währung → Err"
+    );
 }

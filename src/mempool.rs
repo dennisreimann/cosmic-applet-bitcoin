@@ -31,21 +31,13 @@ pub const DEFAULT_CURRENCIES: &[&str] = &["USD", "EUR", "GBP", "CAD", "CHF", "AU
 /// Blockhöhe. Reihenfolge: Preise, Fees, Blockhöhe.
 #[must_use]
 pub fn known_value_ids(currencies: &[String]) -> Vec<ValueId> {
-    let mut ids: Vec<ValueId> = currencies
-        .iter()
-        .map(|c| format!("price:{c}"))
-        .collect();
+    let mut ids: Vec<ValueId> = currencies.iter().map(|c| format!("price:{c}")).collect();
     ids.extend(FEE_IDS.iter().map(|s| s.to_string()));
     ids.push("block:height".to_string());
     ids.extend(
-        [
-            "diff:progress",
-            "diff:change",
-            "diff:date",
-            "diff:blocks",
-        ]
-        .iter()
-        .map(|s| s.to_string()),
+        ["diff:progress", "diff:change", "diff:date", "diff:blocks"]
+            .iter()
+            .map(|s| s.to_string()),
     );
     ids
 }
@@ -87,9 +79,7 @@ pub fn parse_fees(body: &[u8]) -> Result<BTreeMap<ValueId, f64>, String> {
 
 /// Parst `/api/v1/difficulty-adjustment` in `diff:<feld> → f64`.
 /// `estimatedRetargetDate` (ms) wird auf Sekunden нормiert.
-pub fn parse_difficulty(
-    body: &[u8],
-) -> Result<BTreeMap<ValueId, f64>, String> {
+pub fn parse_difficulty(body: &[u8]) -> Result<BTreeMap<ValueId, f64>, String> {
     let v: serde_json::Value =
         serde_json::from_slice(body).map_err(|e| format!("ungültiges JSON: {e}"))?;
     let obj = v.as_object().ok_or("difficulty: kein JSON-Objekt")?;
@@ -102,7 +92,10 @@ pub fn parse_difficulty(
     out.insert("diff:progress".to_string(), f("progressPercent")?);
     out.insert("diff:change".to_string(), f("difficultyChange")?);
     out.insert("diff:blocks".to_string(), f("remainingBlocks")?);
-    out.insert("diff:date".to_string(), f("estimatedRetargetDate")? / 1000.0);
+    out.insert(
+        "diff:date".to_string(),
+        f("estimatedRetargetDate")? / 1000.0,
+    );
     Ok(out)
 }
 
@@ -138,7 +131,10 @@ pub fn thousands(n: f64) -> String {
     }
     out.push_str(&grouped);
     if frac >= 0.005 {
-        out.push_str(&format!(" {}", format!("{frac:.2}").trim_start_matches('0')));
+        out.push_str(&format!(
+            " {}",
+            format!("{frac:.2}").trim_start_matches('0')
+        ));
     }
     out
 }
@@ -164,34 +160,30 @@ fn currency_symbol(code: &str) -> &str {
 #[must_use]
 fn group_locale(n: f64, de: bool) -> String {
     let negative = n < 0.0;
-    let abs = n.abs();
-    let int_s = format!("{}", abs.trunc() as u64);
-    let sep = if de { '.' } else { ',' };
+    let rounded = (n.abs() * 100.0).round() as u64;
+    let int_s = (rounded / 100).to_string();
+    let separator = if de { '.' } else { ',' };
     let grouped: String = {
         let mut s = String::new();
-        for (c, ch) in int_s.chars().rev().enumerate() {
-            if c > 0 && c % 3 == 0 {
-                s.push(sep);
+        for (index, ch) in int_s.chars().rev().enumerate() {
+            if index > 0 && index % 3 == 0 {
+                s.push(separator);
             }
             s.push(ch);
         }
         s.chars().rev().collect()
     };
-    let frac = abs - abs.trunc();
-    let mut out = String::new();
+    let fraction = rounded % 100;
+    let mut output = String::new();
     if negative {
-        out.push('-');
+        output.push('-');
     }
-    out.push_str(&grouped);
-    if frac >= 0.005 {
-        let dec = if de { ',' } else { '.' };
-        let frac_s = format!("{frac:.2}")
-            .trim_start_matches('0')
-            .replace('.', &dec.to_string());
-        out.push(dec);
-        out.push_str(&frac_s);
+    output.push_str(&grouped);
+    if fraction != 0 {
+        output.push(if de { ',' } else { '.' });
+        output.push_str(&format!("{fraction:02}"));
     }
-    out
+    output
 }
 
 /// Anzeigbarer Wert einer ID, in der App-Sprache formatiert:
@@ -375,10 +367,7 @@ async fn fetch_fees(
 /// Holt die angewählten Werte parallel — pro ID-Gruppe nur der jeweils
 /// nötige Endpunkt: Preise einmal für alle `price:*`, Fees einmal für
 /// `fee:*`, Blockhöhe und Difficulty-Adjustment je einmal.
-pub async fn fetch_values(
-    base_url: &str,
-    ids: &[ValueId],
-) -> Vec<(ValueId, Result<f64, String>)> {
+pub async fn fetch_values(base_url: &str, ids: &[ValueId]) -> Vec<(ValueId, Result<f64, String>)> {
     let base = base_url.trim_end_matches('/');
     let group = |prefix: &str| -> Vec<ValueId> {
         ids.iter()
@@ -395,7 +384,12 @@ pub async fn fetch_values(
         fetch_group(base, "api/v1/prices", &prices_ids, parse_prices_map),
         fetch_fees(base, &fees_ids),
         fetch_group(base, "api/blocks/tip/height", &height_ids, parse_height_map),
-        fetch_group(base, "api/v1/difficulty-adjustment", &diff_ids, parse_difficulty),
+        fetch_group(
+            base,
+            "api/v1/difficulty-adjustment",
+            &diff_ids,
+            parse_difficulty,
+        ),
     )
     .await;
 
