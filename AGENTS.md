@@ -66,9 +66,12 @@ BTC prices per currency, fee estimates and the current block height.
   `~/.local/share/...`).
 - `./restart-applet.sh` toggles the panel entry for a hot reload
   (`~/.config/cosmic/com.system76.CosmicPanel.Panel/v1/plugins_wings`).
-- Before a release: update dependencies to the latest versions
-  (`cargo update` in Cargo.lock; check for available major bumps in
-  `Cargo.toml`), then run the full test suite and clippy again.
+- **Before EVERY release (mandatory):** run `cargo update` first, check
+  for available major bumps of the direct dependencies in `Cargo.toml`
+  and apply sensible ones, then run the full test suite and clippy again.
+  Never tag a release from a stale Cargo.lock — v1.3.0 shipped outdated
+  transitive dependencies (Dependabot warnings) because this step was
+  skipped; the patch release fixed it.
 
 ## Reliability patterns (v1.3.0)
 
