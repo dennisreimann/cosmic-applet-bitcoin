@@ -11,6 +11,27 @@ then renamed to the new version and emptied).
 
 ## [Unreleased]
 
+## [1.3.0] - 2026-11-13
+
+### Fixed
+
+- Fractional BTC prices rendered doubled decimal separators
+  (`79.941,,23 $`); now exactly one localized separator with cent
+  rounding.
+- Failed fetch groups no longer vanish silently: last known values stay
+  and the popup shows the error cause. Refresh errors no longer clear
+  good values.
+- A settings save mid-refresh no longer spawns parallel refresh chains
+  (generation-based sequencing; stale results and timers are discarded).
+- Settings no longer drop saved currencies that the live catalog does
+  not offer; invalid intervals and save failures are shown instead of
+  silently applied.
+- Config writes are atomic (tempfile, 0600 before persist); invalid TOML
+  is reported in the settings window instead of silently replaced by
+  defaults.
+- Release archives now ship the settings binary and icon; `install.sh`
+  works from a source checkout and an extracted archive, from any cwd.
+
 ## [1.2.0] - 2026-11-09
 
 ### Added
