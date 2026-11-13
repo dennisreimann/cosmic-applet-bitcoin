@@ -27,3 +27,5 @@ value-diff-progress = Schwierigkeitsfortschritt
 value-diff-change = Schwierigkeitsänderung
 value-diff-date = Geschätztes Retarget
 value-diff-blocks = Blöcke bis Retarget
+error-line = Fehler: { $e }
+fetch-error = Aktualisierung fehlgeschlagen: { $e }. Die letzten erfolgreichen Werte bleiben sichtbar.

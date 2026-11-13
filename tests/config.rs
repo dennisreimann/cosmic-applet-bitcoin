@@ -91,7 +91,12 @@ fn panel_values_some_means_first_n_clamped() {
     };
     assert_eq!(cfg.panel_values(), ["price:USD"]);
     assert_eq!(
-        AppConfig { panel_count: Some(99), ..cfg }.panel_values().len(),
+        AppConfig {
+            panel_count: Some(99),
+            ..cfg
+        }
+        .panel_values()
+        .len(),
         2
     );
 }
@@ -115,7 +120,10 @@ fn move_value_ignores_out_of_bounds() {
 
 #[test]
 fn move_value_across_keeps_other_members() {
-    let mut v = ["a", "b", "c", "d", "e"].iter().map(|s| s.to_string()).collect();
+    let mut v = ["a", "b", "c", "d", "e"]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
     let mut boundary = 3; // a,b,c im Panel
 
     // d (unten) nach oben (idx 3 → 2): nur d wechselt ins Panel.
@@ -131,7 +139,10 @@ fn move_value_across_keeps_other_members() {
 
 #[test]
 fn move_value_across_internal_moves_follow_line() {
-    let mut v = ["a", "b", "c", "d", "e"].iter().map(|s| s.to_string()).collect();
+    let mut v = ["a", "b", "c", "d", "e"]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
     let mut boundary = 2;
     config::move_value_across(&mut v, &mut boundary, 1, 0);
     assert_eq!(boundary, 2);

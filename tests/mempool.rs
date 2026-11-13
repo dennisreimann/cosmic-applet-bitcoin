@@ -82,11 +82,7 @@ async fn fetch_values_falls_back_to_fees_recommended() {
         &["fee:fastest".into(), "fee:minimum".into()],
     )
     .await;
-    let got: HashMap<_, _> = vals
-        .values
-        .iter()
-        .map(|(id, r)| (id.clone(), r.clone().map_err(|_| ())))
-        .collect();
+    let got: HashMap<_, _> = vals.values.iter().map(|(id, r)| (id.clone(), *r)).collect();
     assert_eq!(got.get("fee:fastest"), Some(&Ok(21.0)), "{got:?}");
     assert_eq!(got.get("fee:minimum"), Some(&Ok(5.0)), "{got:?}");
 }
@@ -108,11 +104,7 @@ async fn fetch_values_prefers_fees_precise_over_recommended() {
     });
 
     let vals = mempool::fetch_values(&server.base_url(), &["fee:fastest".into()]).await;
-    let got: HashMap<_, _> = vals
-        .values
-        .iter()
-        .map(|(id, r)| (id.clone(), r.clone().map_err(|_| ())))
-        .collect();
+    let got: HashMap<_, _> = vals.values.iter().map(|(id, r)| (id.clone(), *r)).collect();
     assert_eq!(got.get("fee:fastest"), Some(&Ok(2.909)), "{got:?}");
 }
 
@@ -165,7 +157,7 @@ async fn fetch_values_hits_only_needed_endpoints() {
     let got: HashMap<_, _> = vals
         .values
         .iter()
-        .map(|(id, r)| (id.clone(), r.clone().map_err(|_| ())))
+        .map(|(id, r)| (id.clone(), *r))
         .collect::<std::collections::HashMap<String, Result<f64, ()>>>();
     assert_eq!(got.get("price:EUR"), Some(&Ok(71784.0)));
     assert_eq!(got.get("block:height"), Some(&Ok(973692.0)));

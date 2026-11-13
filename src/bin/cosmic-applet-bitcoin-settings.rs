@@ -7,7 +7,7 @@
 
 use cosmic::app::{Core, Task};
 use cosmic::cosmic_theme::Spacing;
-use cosmic::iced::{Alignment, Length, window};
+use cosmic::iced::{window, Alignment, Length};
 use cosmic::widget::{
     button, column, container, divider, dropdown, row, scrollable, text, text_input,
 };
@@ -65,12 +65,13 @@ struct SettingsApp {
     rows: Vec<String>,
     /// Katalog der wählbaren Werte (IDs): Preise der Instanz + Fees + Höhe.
     catalog: Vec<mempool::ValueId>,
+    error: Option<String>,
 }
 
 impl SettingsApp {
     /// Katalog neu aufbauen (nach Währungs-Fetch): Preise vor Fees/height.
     fn rebuild_catalog(&mut self, currencies: Vec<String>) {
-        self.catalog = mempool::known_value_ids(&currencies);
+        self.catalog = cosmic_applet_bitcoin::settings::merge_catalog(&currencies, &self.rows);
     }
 
     fn catalog_index(&self, id: &str) -> Option<usize> {
@@ -96,14 +97,19 @@ impl Application for SettingsApp {
                 None => cfg.values.len(),
             },
             rows: cfg.values.clone(),
-            catalog: mempool::known_value_ids(mempool::DEFAULT_CURRENCIES.iter().map(|s| s.to_string()).collect::<Vec<_>>().as_slice()),
+            error: cosmic_applet_bitcoin::config::config_path()
+                .and_then(|path| cosmic_applet_bitcoin::config::load_report(&path).error),
+            catalog: mempool::known_value_ids(
+                mempool::DEFAULT_CURRENCIES
+                    .iter()
+                    .map(|s| s.to_string())
+                    .collect::<Vec<_>>()
+                    .as_slice(),
+            ),
         };
         app.core.set_header_title(fl!("settings-title"));
-        let title_task = cosmic::ApplicationExt::set_window_title(
-            &mut app,
-            fl!("settings-title"),
-            main_id,
-        );
+        let title_task =
+            cosmic::ApplicationExt::set_window_title(&mut app, fl!("settings-title"), main_id);
 
         // Währungen der konfigurierten Instanz laden (fallback: default).
         let base = if app.url.is_empty() {
@@ -119,7 +125,10 @@ impl Application for SettingsApp {
                         .await
                         .map(|p| p.into_iter().map(|(c, _)| c).collect::<Vec<_>>())
                         .unwrap_or_else(|_| {
-                            mempool::DEFAULT_CURRENCIES.iter().map(|s| s.to_string()).collect()
+                            mempool::DEFAULT_CURRENCIES
+                                .iter()
+                                .map(|s| s.to_string())
+                                .collect()
                         })
                 },
                 |r| cosmic::Action::App(Message::CurrenciesLoaded(r)),
@@ -140,18 +149,7 @@ impl Application for SettingsApp {
         match message {
             Message::UrlChanged(v) => self.url = v.trim().to_string(),
             Message::RefreshMinutesChanged(v) => self.refresh_minutes = v,
-            Message::CurrenciesLoaded(currencies) => {
-                self.rebuild_catalog(currencies);
-                // Ungültige Selektionen entfernen: Zeilen mit IDs, die im
-                // Katalog nicht mehr existieren, aus der Auswahl werfen.
-                self.rows = self
-                    .rows
-                    .iter()
-                    .filter(|id| self.catalog_index(id).is_some())
-                    .cloned()
-                    .collect();
-                self.boundary = self.boundary.min(self.rows.len());
-            }
+            Message::CurrenciesLoaded(currencies) => self.rebuild_catalog(currencies),
             Message::RowValueSelected(i, idx) => {
                 if let Some(id) = self.catalog.get(idx) {
                     if let Some(row) = self.rows.get_mut(i) {
@@ -180,23 +178,38 @@ impl Application for SettingsApp {
                 }
             }
             Message::AddRow => {
-                self.rows
-                    .push(mempool::known_value_ids(&[]).into_iter().last().unwrap_or_else(|| "block:height".to_string()));
+                self.rows.push(
+                    mempool::known_value_ids(&[])
+                        .into_iter()
+                        .last()
+                        .unwrap_or_else(|| "block:height".to_string()),
+                );
             }
             Message::RemoveRow(i) => config::remove_row(&mut self.rows, &mut self.boundary, i),
             Message::Save => {
-                let refresh_minutes: u32 =
-                    self.refresh_minutes.trim().parse().unwrap_or(1);
+                let refresh_minutes = match cosmic_applet_bitcoin::settings::parse_refresh_minutes(
+                    &self.refresh_minutes,
+                ) {
+                    Ok(value) => value.get(),
+                    Err(error) => {
+                        self.error = Some(error.to_string());
+                        return Task::none();
+                    }
+                };
                 let cfg = AppConfig {
                     instance_url: self.url.trim().trim_end_matches('/').to_string(),
                     panel_count: (self.boundary != self.rows.len()).then_some(self.boundary),
                     refresh_minutes: refresh_minutes.clamp(1, 1440),
                     values: self.rows.clone(),
                 };
-                if let Err(e) = config::save(&cfg) {
-                    eprintln!("Config speichern fehlgeschlagen: {e}");
+                if let Err(error) = config::save(&cfg) {
+                    self.error = Some(error.to_string());
+                    return Task::none();
                 }
-                return window::close(self.core.main_window_id().unwrap());
+                return self
+                    .core
+                    .main_window_id()
+                    .map_or_else(Task::none, window::close);
             }
         }
         Task::none()
@@ -216,7 +229,13 @@ impl Application for SettingsApp {
             ..
         } = binding.cosmic().spacing;
 
-        let mut col = column![].padding(space_m).spacing(space_s).width(Length::Fill);
+        let mut col = column![]
+            .padding(space_m)
+            .spacing(space_s)
+            .width(Length::Fill);
+        if let Some(error) = &self.error {
+            col = col.push(text::body(fl!("error-line", e = error)));
+        }
 
         // Label + Input als Gruppe: Abstand halbiert (space_xxxs statt
         // space_s), damit das Label optisch am Input hängt.
@@ -253,16 +272,18 @@ impl Application for SettingsApp {
             .spacing(space_xxxs),
         );
 
-        let labels: Vec<String> = self.catalog.iter().map(|id| value_display_name(id)).collect();
+        let labels: Vec<String> = self
+            .catalog
+            .iter()
+            .map(|id| value_display_name(id))
+            .collect();
 
         let trash_button = |i: usize| {
             // Entfernen-Kreuz (X) in kräftigem Rot, quadratisch in
             // Input-Höhe, runde Ecken via Button-Style.
-            let close_icon = cosmic::widget::icon::icon(
-                cosmic::widget::icon::Handle::from(
-                    cosmic::widget::icon::from_name("window-close-symbolic"),
-                ),
-            )
+            let close_icon = cosmic::widget::icon::icon(cosmic::widget::icon::Handle::from(
+                cosmic::widget::icon::from_name("window-close-symbolic"),
+            ))
             .size(16)
             .class(cosmic::theme::Svg::custom(move |_| {
                 cosmic::iced::widget::svg::Style {
@@ -297,10 +318,8 @@ impl Application for SettingsApp {
             .width(Length::Fill)
         };
 
-        col = col.push(
-            container(text::heading(fl!("values-header")))
-                .padding([space_xxs, 0, 0, 0]),
-        );
+        col =
+            col.push(container(text::heading(fl!("values-header"))).padding([space_xxs, 0, 0, 0]));
 
         for (i, row_id) in self.rows.iter().enumerate() {
             if i == self.boundary {
@@ -343,9 +362,7 @@ impl Application for SettingsApp {
             .width(Length::Fill),
         );
 
-        container(scrollable(col))
-            .width(Length::Fill)
-            .into()
+        container(scrollable(col)).width(Length::Fill).into()
     }
 
     fn style(&self) -> Option<cosmic::iced::theme::Style> {

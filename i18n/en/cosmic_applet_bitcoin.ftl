@@ -27,3 +27,5 @@ value-diff-progress = Difficulty progress
 value-diff-change = Difficulty change
 value-diff-date = Est. retarget date
 value-diff-blocks = Remaining blocks
+error-line = Error: { $e }
+fetch-error = Refresh failed: { $e }. Last successful values are kept.

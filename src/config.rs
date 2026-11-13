@@ -84,22 +84,58 @@ pub fn load() -> AppConfig {
 /// Lädt die Konfiguration aus einer Datei. Fehlt die Datei oder ist sie
 /// ungültig → Default (mit Default-Liste); eine gültige Datei mit leer
 /// Liste bleibt leer (Nutzer will nichts sehen).
-pub fn load_from(path: &Path) -> AppConfig {
-    let mut cfg = std::fs::read_to_string(path)
-        .ok()
-        .and_then(|s| toml::from_str::<AppConfig>(&s).ok())
-        .unwrap_or_default();
-    if cfg.refresh_minutes == 0 {
-        cfg.refresh_minutes = default_refresh_minutes();
+/// The invalid-file error is observable to the settings window, so a
+/// subsequent Save cannot silently reinterpret a damaged existing file.
+pub struct LoadReport {
+    pub config: AppConfig,
+    pub error: Option<String>,
+}
+
+pub fn load_report(path: &Path) -> LoadReport {
+    let source = match std::fs::read_to_string(path) {
+        Ok(source) => source,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return LoadReport {
+                config: AppConfig::default(),
+                error: None,
+            };
+        }
+        Err(error) => {
+            return LoadReport {
+                config: AppConfig::default(),
+                error: Some(error.to_string()),
+            };
+        }
+    };
+    match toml::from_str::<AppConfig>(&source) {
+        Ok(mut config) => {
+            if config.refresh_minutes == 0 {
+                config.refresh_minutes = 1;
+            }
+            LoadReport {
+                config,
+                error: None,
+            }
+        }
+        Err(error) => LoadReport {
+            config: AppConfig::default(),
+            error: Some(error.to_string()),
+        },
     }
-    cfg
+}
+
+pub fn load_from(path: &Path) -> AppConfig {
+    let report = load_report(path);
+    if let Some(error) = report.error {
+        eprintln!("cosmic-applet-bitcoin config: {error}");
+    }
+    report.config
 }
 
 /// Speichert die Konfiguration am Standardpfad (Rechte `0600` unter Unix).
 pub fn save(cfg: &AppConfig) -> std::io::Result<()> {
-    let path = config_path().ok_or_else(|| {
-        std::io::Error::other("kein Config-Verzeichnis ermittelbar")
-    })?;
+    let path = config_path()
+        .ok_or_else(|| std::io::Error::other("kein Config-Verzeichnis ermittelbar"))?;
     save_to(&path, cfg)
 }
 
@@ -108,14 +144,23 @@ pub fn save_to(path: &Path, cfg: &AppConfig) -> std::io::Result<()> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
+    let parent = path
+        .parent()
+        .ok_or_else(|| std::io::Error::other("no config directory"))?;
+    std::fs::create_dir_all(parent)?;
     let body = toml::to_string(cfg)
         .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
-    std::fs::write(path, body)?;
+    use std::io::Write;
+    let mut file = tempfile::NamedTempFile::new_in(parent)?;
+    file.write_all(body.as_bytes())?;
+    file.as_file().sync_all()?;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))?;
+        file.as_file()
+            .set_permissions(std::fs::Permissions::from_mode(0o600))?;
     }
+    file.persist(path).map_err(|error| error.error)?;
     Ok(())
 }
 
@@ -134,12 +179,7 @@ pub fn move_value(values: &mut Vec<String>, from: usize, to: usize) {
 /// Weg die Linie, wechselt GENAU dieser Wert die Gruppe — die Linie folgt,
 /// sodass alle übrigen Werte in ihren Gruppen bleiben (internes
 /// Verschieben lässt die Linie zwischen denselben Werten stehen).
-pub fn move_value_across(
-    values: &mut Vec<String>,
-    boundary: &mut usize,
-    from: usize,
-    to: usize,
-) {
+pub fn move_value_across(values: &mut Vec<String>, boundary: &mut usize, from: usize, to: usize) {
     if from >= values.len() || to >= values.len() || from == to {
         return;
     }
