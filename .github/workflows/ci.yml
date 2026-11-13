@@ -62,8 +62,10 @@ jobs:
 
       - name: Install script packaging
         run: |
-          mkdir -p dist
+          mkdir -p dist/assets
           cp target/release/cosmic-applet-bitcoin dist/
+          cp target/release/cosmic-applet-bitcoin-settings dist/
+          cp assets/bitcoin.svg dist/assets/
           cp data/net.d11n.CosmicBitcoin.desktop dist/
           cp install.sh dist/
           chmod +x dist/install.sh
@@ -99,7 +101,7 @@ jobs:
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
           awk -v ver="$VERSION" '
-            $0 ~ ("^## \\[" ver "\\]") { flag = 1; next }
+            index($0, "## [" ver "]") == 1 { flag = 1; next }
             flag && (/^## \[/ || /^\[.*\]: /) { exit }
             flag { print }
           ' CHANGELOG.md > release-notes.md

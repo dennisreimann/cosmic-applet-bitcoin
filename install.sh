@@ -1,29 +1,29 @@
 #!/usr/bin/env bash
-# Installs the applet user-locally (binary + applet discovery).
+# Installs from either a source checkout or an extracted release archive.
 set -euo pipefail
-
 APP_ID="net.d11n.CosmicBitcoin"
 BIN_NAME="cosmic-applet-bitcoin"
-ROOT="$(cd "$(dirname "$0")" && pwd)"
-BIN="$ROOT/target/release/$BIN_NAME"
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+BINDIR="${BINDIR:-$HOME/.local/bin}"
+DATADIR="${DATADIR:-$HOME/.local/share}"
 
-[ -x "$BIN" ] || { echo "Error: $BIN not found — run 'cargo build --release' first" >&2; exit 1; }
+BIN="$ROOT/$BIN_NAME"
+[ -x "$BIN" ] || BIN="$ROOT/target/release/$BIN_NAME"
+SETTINGS_BIN="$ROOT/$BIN_NAME-settings"
+[ -x "$SETTINGS_BIN" ] || SETTINGS_BIN="$ROOT/target/release/$BIN_NAME-settings"
+DESKTOP="$ROOT/data/$APP_ID.desktop"
+[ -f "$DESKTOP" ] || DESKTOP="$ROOT/$APP_ID.desktop"
+ICON="$ROOT/assets/bitcoin.svg"
 
-install -Dm0755 "$BIN" "$HOME/.local/bin/$BIN_NAME"
-SETTINGS_BIN="$ROOT/target/release/cosmic-applet-bitcoin-settings"
-[ -x "$SETTINGS_BIN" ] || { echo "Error: $SETTINGS_BIN not found — run 'cargo build --release' first" >&2; exit 1; }
-install -Dm0755 "$SETTINGS_BIN" "$HOME/.local/bin/cosmic-applet-bitcoin-settings"
-mkdir -p "$HOME/.local/share/applications"
-sed "s|@BIN@|$HOME/.local/bin/$BIN_NAME|" "data/$APP_ID.desktop" \
-    > "$HOME/.local/share/applications/$APP_ID.desktop"
+for file in "$BIN" "$SETTINGS_BIN" "$DESKTOP" "$ICON"; do
+    [ -f "$file" ] || { echo "Error: $file not found; build with cargo build --release" >&2; exit 1; }
+done
 
-# Icon für die Applet-Liste in den Systemeinstellungen (ohne Icon wird
-# der Eintrag dort nicht angezeigt).
-mkdir -p "$HOME/.local/share/icons/hicolor/scalable/apps"
-cp "$ROOT/assets/bitcoin.svg" \
-    "$HOME/.local/share/icons/hicolor/scalable/apps/$APP_ID.svg"
+install -Dm0755 "$BIN" "$BINDIR/$BIN_NAME"
+install -Dm0755 "$SETTINGS_BIN" "$BINDIR/$BIN_NAME-settings"
+install -Dm0644 "$ICON" "$DATADIR/icons/hicolor/scalable/apps/$APP_ID.svg"
+mkdir -p "$DATADIR/applications"
+sed "s|@BIN@|$BINDIR/$BIN_NAME|" "$DESKTOP" > "$DATADIR/applications/$APP_ID.desktop"
+gtk-update-icon-cache -f -t "$DATADIR/icons/hicolor" 2>/dev/null || true
 
-gtk-update-icon-cache -f -t "$HOME/.local/share/icons/hicolor" 2>/dev/null || true
-
-echo "Installed. Add the 'Bitcoin' applet in COSMIC Panel settings:"
-echo "  Settings -> Panel -> Applets (right wing)"
+echo "Installed Bitcoin in $BINDIR. Add it in Settings -> Panel -> Applets."
