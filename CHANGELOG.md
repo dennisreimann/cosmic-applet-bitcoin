@@ -9,7 +9,7 @@ The **Unreleased** section accumulates changes as they land; its entries are
 used verbatim as release notes when cutting a new release (the section is
 then renamed to the new version and emptied).
 
-## [Unreleased]
+## [1.3.2] - 2026-11-20
 
 ### Changed
 
@@ -17,6 +17,18 @@ then renamed to the new version and emptied).
   values, older Mempool instances) are now shown without decimal places
   (`3 sat/vB`); values from `/api/v1/fees/precise` keep two decimals
   (`3,00 sat/vB`).
+
+### Dependencies
+
+- reqwest 0.12 → 0.13: the removed `rustls-tls-native-roots` feature is
+  replaced by `rustls` (now backed by rustls-platform-verifier), which
+  still trusts the system CA store so instances with custom CAs (e. g.
+  Start9) keep working.
+- rust-embed 8.13 → 8.14, httpmock (dev) 0.7 → 0.9; all other direct
+  crates.io dependencies are already on the latest stable release.
+  Full `cargo update` stays blocked by the libcosmic dependency tree
+  (upstream dbus-settings-bindings master no longer carries
+  `cosmic-settings-daemon`); git dependencies remain pinned as intended.
 
 ## [1.3.1] - 2026-11-13
 
