@@ -4,11 +4,11 @@ use std::collections::HashMap;
 #[test]
 fn fractional_prices_have_one_localized_decimal_separator() {
     assert_eq!(
-        mempool::format_value_lang(true, "price:USD", 79941.23),
+        mempool::format_value_lang(true, "price:USD", 79941.23, true),
         "79.941,23 $"
     );
     assert_eq!(
-        mempool::format_value_lang(false, "price:USD", 79941.23),
+        mempool::format_value_lang(false, "price:USD", 79941.23, true),
         "$79,941.23"
     );
 }
@@ -85,6 +85,36 @@ async fn fetch_values_falls_back_to_fees_recommended() {
     let got: HashMap<_, _> = vals.values.iter().map(|(id, r)| (id.clone(), *r)).collect();
     assert_eq!(got.get("fee:fastest"), Some(&Ok(21.0)), "{got:?}");
     assert_eq!(got.get("fee:minimum"), Some(&Ok(5.0)), "{got:?}");
+    // Fallback → Gebühren gelten als NICHT precise → ohne Nachkommastellen.
+    assert_eq!(vals.fees_precise, Some(false));
+}
+
+#[test]
+fn format_fee_precise_source_keeps_decimals() {
+    assert_eq!(
+        mempool::format_value_lang(true, "fee:fastest", 2.909, true),
+        "2,91 sat/vB"
+    );
+    assert_eq!(
+        mempool::format_value_lang(true, "fee:fastest", 3.0, true),
+        "3,00 sat/vB"
+    );
+    assert_eq!(
+        mempool::format_value_lang(false, "fee:fastest", 2.909, true),
+        "2.91 sat/vB"
+    );
+}
+
+#[test]
+fn format_fee_non_precise_source_has_no_decimals() {
+    assert_eq!(
+        mempool::format_value_lang(true, "fee:fastest", 3.0, false),
+        "3 sat/vB"
+    );
+    assert_eq!(
+        mempool::format_value_lang(false, "fee:minimum", 5.0, false),
+        "5 sat/vB"
+    );
 }
 
 #[tokio::test]
@@ -106,6 +136,29 @@ async fn fetch_values_prefers_fees_precise_over_recommended() {
     let vals = mempool::fetch_values(&server.base_url(), &["fee:fastest".into()]).await;
     let got: HashMap<_, _> = vals.values.iter().map(|(id, r)| (id.clone(), *r)).collect();
     assert_eq!(got.get("fee:fastest"), Some(&Ok(2.909)), "{got:?}");
+    // /precise erfolgreich → Nachkommastellen erlaubt.
+    assert_eq!(vals.fees_precise, Some(true));
+}
+
+#[tokio::test]
+async fn fetch_values_fee_group_failure_has_no_precise_flag() {
+    // Beide Fee-Endpunkte failed → keine neuen Werte, Precision-Flag
+    // bleibt None (Applet behält den letzten Stand).
+    let server = httpmock::MockServer::start();
+    server.mock(|when, then| {
+        when.method(httpmock::Method::GET).path("/api/v1/fees/precise");
+        then.status(500);
+    });
+    server.mock(|when, then| {
+        when.method(httpmock::Method::GET)
+            .path("/api/v1/fees/recommended");
+        then.status(500);
+    });
+
+    let vals = mempool::fetch_values(&server.base_url(), &["fee:fastest".into()]).await;
+    assert!(vals.values.is_empty(), "{vals:?}");
+    assert_eq!(vals.errors.len(), 1);
+    assert_eq!(vals.fees_precise, None);
 }
 
 #[test]
@@ -117,11 +170,11 @@ fn parse_height_integer_body() {
 #[test]
 fn format_block_height_still_space_separator() {
     assert_eq!(
-        mempool::format_value_lang(true, "block:height", 973692.0),
+        mempool::format_value_lang(true, "block:height", 973692.0, true),
         "973 692"
     );
     assert_eq!(
-        mempool::format_value_lang(false, "block:height", 973692.0),
+        mempool::format_value_lang(false, "block:height", 973692.0, true),
         "973 692"
     );
 }
@@ -161,6 +214,8 @@ async fn fetch_values_hits_only_needed_endpoints() {
         .collect::<std::collections::HashMap<String, Result<f64, ()>>>();
     assert_eq!(got.get("price:EUR"), Some(&Ok(71784.0)));
     assert_eq!(got.get("block:height"), Some(&Ok(973692.0)));
+    // Keine Fees angefragt → Precision-Flag bleibt None.
+    assert_eq!(vals.fees_precise, None);
 }
 
 #[test]
@@ -190,19 +245,19 @@ fn known_value_ids_includes_difficulty() {
 #[test]
 fn format_price_german_locale_symbol_after() {
     assert_eq!(
-        mempool::format_value_lang(true, "price:EUR", 71784.0),
+        mempool::format_value_lang(true, "price:EUR", 71784.0, true),
         "71.784 €"
     );
     assert_eq!(
-        mempool::format_value_lang(true, "price:USD", 79941.0),
+        mempool::format_value_lang(true, "price:USD", 79941.0, true),
         "79.941 $"
     );
     assert_eq!(
-        mempool::format_value_lang(true, "price:CHF", 66196.0),
+        mempool::format_value_lang(true, "price:CHF", 66196.0, true),
         "66.196 Fr"
     );
     assert_eq!(
-        mempool::format_value_lang(true, "price:JPY", 12646148.0),
+        mempool::format_value_lang(true, "price:JPY", 12646148.0, true),
         "12.646.148 ¥"
     );
 }
@@ -210,11 +265,11 @@ fn format_price_german_locale_symbol_after() {
 #[test]
 fn format_price_english_locale_symbol_before() {
     assert_eq!(
-        mempool::format_value_lang(false, "price:EUR", 71784.0),
+        mempool::format_value_lang(false, "price:EUR", 71784.0, true),
         "€71,784"
     );
     assert_eq!(
-        mempool::format_value_lang(false, "price:USD", 79941.0),
+        mempool::format_value_lang(false, "price:USD", 79941.0, true),
         "$79,941"
     );
 }
@@ -222,24 +277,24 @@ fn format_price_english_locale_symbol_before() {
 #[test]
 fn format_difficulty_values_human_readable() {
     assert_eq!(
-        mempool::format_value_lang(true, "diff:progress", 98.264),
+        mempool::format_value_lang(true, "diff:progress", 98.264, true),
         "98,3 %"
     );
     assert_eq!(
-        mempool::format_value_lang(false, "diff:progress", 98.264),
+        mempool::format_value_lang(false, "diff:progress", 98.264, true),
         "98.3%"
     );
     assert_eq!(
-        mempool::format_value_lang(true, "diff:change", 5.5267),
+        mempool::format_value_lang(true, "diff:change", 5.5267, true),
         "+5,53 %"
     );
     assert_eq!(
-        mempool::format_value_lang(false, "diff:change", -0.5),
+        mempool::format_value_lang(false, "diff:change", -0.5, true),
         "-0.50%"
     );
-    assert_eq!(mempool::format_value_lang(true, "diff:blocks", 35.0), "35");
+    assert_eq!(mempool::format_value_lang(true, "diff:blocks", 35.0, true), "35");
     assert_eq!(
-        mempool::format_value_lang(true, "diff:blocks", 1112.0),
+        mempool::format_value_lang(true, "diff:blocks", 1112.0, true),
         "1.112"
     );
 }
@@ -247,9 +302,9 @@ fn format_difficulty_values_human_readable() {
 #[test]
 fn format_difficulty_date_locale_and_german_style() {
     // Parser normalisiert ms → s: 1793301079.205 s ≙ 29.10.2026
-    let s = mempool::format_value_lang(true, "diff:date", 1793301079.205);
+    let s = mempool::format_value_lang(true, "diff:date", 1793301079.205, true);
     assert!(s.starts_with("29.10.2026"), "de-Format: {s}");
-    let s = mempool::format_value_lang(false, "diff:date", 1793301079.205);
+    let s = mempool::format_value_lang(false, "diff:date", 1793301079.205, true);
     assert!(s.contains("2026"), "en-Format: {s}");
 }
 

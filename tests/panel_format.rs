@@ -14,7 +14,7 @@ fn selected() -> Vec<String> {
 
 #[test]
 fn empty_selection_renders_empty_line() {
-    assert_eq!(format_panel_line_lang(true, &HashMap::new(), &[]), "");
+    assert_eq!(format_panel_line_lang(true, &HashMap::new(), &[], true), "");
 }
 
 #[test]
@@ -25,23 +25,30 @@ fn values_in_selection_order_join_with_middle_dot() {
     ]);
     let sel = ["block:height", "price:USD"];
     let sel: Vec<String> = sel.iter().map(|s| s.to_string()).collect();
-    assert_eq!(format_panel_line_lang(true, &v, &sel), "973 692 · 79.941 $");
+    assert_eq!(format_panel_line_lang(true, &v, &sel, true), "973 692 · 79.941 $");
     assert_eq!(
-        format_panel_line_lang(true, &v, &selected()),
+        format_panel_line_lang(true, &v, &selected(), true),
         "79.941 $ · 973 692"
     );
 }
 
 #[test]
+fn fee_line_without_precise_source_has_no_decimals() {
+    let v = values(vec![("fee:minimum", Ok(3.0))]);
+    let sel = vec!["fee:minimum".to_string()];
+    assert_eq!(format_panel_line_lang(true, &v, &sel, false), "3 sat/vB");
+}
+
+#[test]
 fn failed_value_renders_dash() {
     let v = values(vec![("price:USD", Err(())), ("block:height", Ok(973692.0))]);
-    assert_eq!(format_panel_line_lang(true, &v, &selected()), "— · 973 692");
+    assert_eq!(format_panel_line_lang(true, &v, &selected(), true), "— · 973 692");
 }
 
 #[test]
 fn missing_value_renders_dash() {
     assert_eq!(
-        format_panel_line_lang(true, &HashMap::new(), &selected()),
+        format_panel_line_lang(true, &HashMap::new(), &selected(), true),
         "— · —"
     );
 }

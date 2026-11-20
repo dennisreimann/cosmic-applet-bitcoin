@@ -11,6 +11,13 @@ then renamed to the new version and emptied).
 
 ## [Unreleased]
 
+### Changed
+
+- Fee estimates served by the `/api/v1/fees/recommended` fallback (integer
+  values, older Mempool instances) are now shown without decimal places
+  (`3 sat/vB`); values from `/api/v1/fees/precise` keep two decimals
+  (`3,00 sat/vB`).
+
 ## [1.3.1] - 2026-11-13
 
 ### Fixed

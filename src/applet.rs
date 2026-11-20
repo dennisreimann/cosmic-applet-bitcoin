@@ -21,16 +21,25 @@ pub type ValueMap = HashMap<ValueId, Result<f64, ()>>;
 
 /// Panel-Zeile: Werte aller angewählten Werte in Auswahloreihenfolge.
 /// Keine Auswahl → leerer String (dann nur das Logo).
-pub fn format_panel_line(values: &ValueMap, selected: &[ValueId]) -> String {
-    format_panel_line_lang(mempool::is_app_language_de(), values, selected)
+pub fn format_panel_line(
+    values: &ValueMap,
+    selected: &[ValueId],
+    fees_precise: bool,
+) -> String {
+    format_panel_line_lang(mempool::is_app_language_de(), values, selected, fees_precise)
 }
 
 /// Panel-Zeile mit expliziter Sprachauswahl (deterministisch testbar).
-pub fn format_panel_line_lang(is_de: bool, values: &ValueMap, selected: &[ValueId]) -> String {
+pub fn format_panel_line_lang(
+    is_de: bool,
+    values: &ValueMap,
+    selected: &[ValueId],
+    fees_precise: bool,
+) -> String {
     selected
         .iter()
         .map(|id| match values.get(id) {
-            Some(Ok(v)) => mempool::format_value_lang(is_de, id, *v),
+            Some(Ok(v)) => mempool::format_value_lang(is_de, id, *v, fees_precise),
             _ => "—".to_string(),
         })
         .collect::<Vec<_>>()
@@ -66,8 +75,12 @@ pub fn value_display_name(id: &str) -> String {
 }
 
 /// Popup-Zeilen: (Anzeigename, formatierter Wert) in Auswahloreihenfolge.
-pub fn popup_rows(values: &ValueMap, selected: &[ValueId]) -> Vec<(String, String)> {
-    popup_rows_lang(mempool::is_app_language_de(), values, selected)
+pub fn popup_rows(
+    values: &ValueMap,
+    selected: &[ValueId],
+    fees_precise: bool,
+) -> Vec<(String, String)> {
+    popup_rows_lang(mempool::is_app_language_de(), values, selected, fees_precise)
 }
 
 /// Popup-Zeilen mit expliziter Sprachauswahl (deterministisch testbar).
@@ -75,12 +88,13 @@ pub fn popup_rows_lang(
     is_de: bool,
     values: &ValueMap,
     selected: &[ValueId],
+    fees_precise: bool,
 ) -> Vec<(String, String)> {
     selected
         .iter()
         .map(|id| {
             let value = match values.get(id) {
-                Some(Ok(v)) => mempool::format_value_lang(is_de, id, *v),
+                Some(Ok(v)) => mempool::format_value_lang(is_de, id, *v, fees_precise),
                 _ => "—".to_string(),
             };
             (value_display_name(id), value)
@@ -120,10 +134,7 @@ pub type FetchResponse = mempool::FetchResponse;
 
 async fn fetch_all(cfg: AppConfig) -> mempool::FetchResponse {
     if cfg.values.is_empty() {
-        return mempool::FetchResponse {
-            values: vec![],
-            errors: vec![],
-        };
+        return mempool::FetchResponse::default();
     }
     let base = if cfg.instance_url.is_empty() {
         mempool::DEFAULT_INSTANCE.to_string()
@@ -195,6 +206,9 @@ pub struct BitcoinApplet {
     popup: Option<window::Id>,
     cfg: AppConfig,
     values: ValueMap,
+    /// Fees stammen aus `/api/v1/fees/precise`? (Formatierung: x.xx vs.
+    /// ganzzahlig bei Fallback auf `/fees/recommended`.)
+    fees_precise: bool,
     /// mtime der Config beim letzten Beobachten (Basis für den Watcher).
     config_mtime: Option<std::time::SystemTime>,
     /// Letzter abgeschlossener Fetch-Cycle (Unix-Sekunden).
@@ -204,7 +218,7 @@ pub struct BitcoinApplet {
 }
 
 fn panel_element(state: &BitcoinApplet) -> Element<'_, Message> {
-    let line = format_panel_line(&state.values, state.cfg.panel_values());
+    let line = format_panel_line(&state.values, state.cfg.panel_values(), state.fees_precise);
     let h = state.core.applet.suggested_size(true).0 as f32;
     if state.core.applet.is_horizontal() {
         let mut r = row![]
@@ -265,7 +279,7 @@ fn popup_element(state: &BitcoinApplet) -> Element<'_, Message> {
     }
 
     // Werte-Zeilen (Name links, Wert rechts).
-    let rows = popup_rows(&state.values, &state.cfg.values);
+    let rows = popup_rows(&state.values, &state.cfg.values, state.fees_precise);
     if rows.is_empty() {
         col = col.push(container(text::body(fl!("no-values"))).padding([0, space_m]));
     } else {
@@ -299,6 +313,7 @@ impl cosmic::Application for BitcoinApplet {
             popup: None,
             cfg: AppConfig::default(),
             values: ValueMap::new(),
+            fees_precise: true,
             config_mtime: None,
             last_updated_unix: None,
             flow: RefreshFlow::default(),
@@ -368,6 +383,9 @@ impl cosmic::Application for BitcoinApplet {
                 }
                 self.flow.finished(generation);
                 self.errors = response.errors;
+                if let Some(precise) = response.fees_precise {
+                    self.fees_precise = precise;
+                }
                 if crate::applet::merge_fetched(&mut self.values, response.values) {
                     self.last_updated_unix = Some(chrono::Utc::now().timestamp());
                 }

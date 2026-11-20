@@ -156,6 +156,10 @@ fn currency_symbol(code: &str) -> &str {
     }
 }
 
+/// Nicht-precise Fees (`/api/v1/fees/recommended`) sind Ganzzahlen —
+/// ohne Nachkommastellen anzeigen; `/precise`-Werte behalten x.xx.
+const FEE_DECIMALS_PRECISE: usize = 2;
+
 /// Gepunktete (de) bzw. kommagetrennte (en) Zahlendarstellung.
 #[must_use]
 fn group_locale(n: f64, de: bool) -> String {
@@ -188,9 +192,11 @@ fn group_locale(n: f64, de: bool) -> String {
 
 /// Anzeigbarer Wert einer ID, in der App-Sprache formatiert:
 /// Preise mit Währungssymbol (de nach der Zahl, en davor), Fees
-/// `x.xx sat/vB`, Blockhöhe mit Leerzeichen-Tausender, Difficulty menschenlesbar.
+/// `x.xx sat/vB` (precise) bzw. ganzzahlig (Fallback auf
+/// `/fees/recommended`), Blockhöhe mit Leerzeichen-Tausender,
+/// Difficulty menschenlesbar.
 #[must_use]
-pub fn format_value_lang(is_de: bool, id: &str, value: f64) -> String {
+pub fn format_value_lang(is_de: bool, id: &str, value: f64, fees_precise: bool) -> String {
     if let Some(code) = id.strip_prefix("price:") {
         let symbol = currency_symbol(code);
         let number = group_locale(value, is_de);
@@ -201,7 +207,8 @@ pub fn format_value_lang(is_de: bool, id: &str, value: f64) -> String {
         };
     }
     if id.starts_with("fee:") {
-        return format!("{} sat/vB", fmt2(value, is_de, 2));
+        let decimals = if fees_precise { FEE_DECIMALS_PRECISE } else { 0 };
+        return format!("{} sat/vB", fmt2(value, is_de, decimals));
     }
     if id == "block:height" {
         return thousands(value);
@@ -261,11 +268,7 @@ pub fn is_app_language_de() -> bool {
         == "de"
 }
 
-/// Anzeige in der App-Sprache: de → deutsche Formatierung, sonst en.
-#[must_use]
-pub fn format_value(id: &str, value: f64) -> String {
-    format_value_lang(is_app_language_de(), id, value)
-}
+
 
 /// „Timeout“-konstante Dauer für requests.
 const TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
@@ -326,6 +329,11 @@ fn parse_height_map(body: &[u8]) -> Result<BTreeMap<ValueId, f64>, String> {
 pub struct FetchResponse {
     pub values: Vec<(ValueId, Result<f64, ()>)>,
     pub errors: Vec<String>,
+    /// `Some(true)`: Fees von `/api/v1/fees/precise`; `Some(false)`: vom
+    /// Fallback `/api/v1/fees/recommended` (Ganzzahlen, keine Nachkom-
+    /// stellen anzeigen); `None`: Fee-Gruppe fehlgeschlagen oder nicht
+    /// angefragt — Applet behält den bisherigen Zustand.
+    pub fees_precise: Option<bool>,
 }
 
 type GroupResponse = Option<Result<Vec<(ValueId, Result<f64, ()>)>, String>>;
@@ -359,17 +367,30 @@ where
 /// Holt Fees: `/api/v1/fees/precise`, bei Fehlschlag (ältere Mempool-
 /// Versionen haben den Endpunkt nicht) Fallback auf `/api/v1/fees/recommended`
 /// — dieselben Keys, nur als Ganzzahlen; `parse_fees` kann beides lesen.
-async fn fetch_fees(client: &reqwest::Client, base_url: &str, ids: &[ValueId]) -> GroupResponse {
+/// Der zweite Rückgabewert markiert, ob die Werte precise sind.
+async fn fetch_fees(
+    client: &reqwest::Client,
+    base_url: &str,
+    ids: &[ValueId],
+) -> (GroupResponse, Option<bool>) {
     if ids.is_empty() {
-        return None;
+        return (None, None);
     }
-    let exact = fetch_group(client, base_url, "api/v1/fees/precise", ids, parse_fees).await?;
+    let Some(exact) =
+        fetch_group(client, base_url, "api/v1/fees/precise", ids, parse_fees).await
+    else {
+        return (None, None);
+    };
     if exact.is_ok() {
-        return Some(exact);
+        return (Some(exact), Some(true));
     }
-    let recommended =
-        fetch_group(client, base_url, "api/v1/fees/recommended", ids, parse_fees).await?;
-    Some(recommended.or(exact))
+    let Some(recommended) =
+        fetch_group(client, base_url, "api/v1/fees/recommended", ids, parse_fees).await
+    else {
+        return (None, None);
+    };
+    let precise = recommended.is_ok().then_some(false);
+    (Some(recommended.or(exact)), precise)
 }
 
 /// Holt die angewählten Werte parallel — pro ID-Gruppe nur der jeweils
@@ -382,6 +403,7 @@ pub async fn fetch_values(base_url: &str, ids: &[ValueId]) -> FetchResponse {
             return FetchResponse {
                 values: Vec::new(),
                 errors: vec![format!("HTTP-Client: {error}")],
+                fees_precise: None,
             };
         }
     };
@@ -397,7 +419,7 @@ pub async fn fetch_values(base_url: &str, ids: &[ValueId]) -> FetchResponse {
     let height_ids = group("block:");
     let diff_ids = group("diff:");
 
-    let (prices, fees, height, diff) = futures_util::future::join4(
+    let (prices, (fees, fees_precise), height, diff) = futures_util::future::join4(
         fetch_group(
             &client,
             base,
@@ -423,7 +445,10 @@ pub async fn fetch_values(base_url: &str, ids: &[ValueId]) -> FetchResponse {
     )
     .await;
 
-    let mut response = FetchResponse::default();
+    let mut response = FetchResponse {
+        fees_precise,
+        ..FetchResponse::default()
+    };
     for group in [prices, fees, height, diff].into_iter().flatten() {
         match group {
             Ok(values) => response.values.extend(values),

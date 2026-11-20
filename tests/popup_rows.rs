@@ -30,7 +30,7 @@ fn rows_in_selection_order_with_units() {
         ("block:height", Ok(973692.0)),
         ("price:USD", Ok(79941.0)),
     ]);
-    let rows = popup_rows_lang(true, &v, &selected());
+    let rows = popup_rows_lang(true, &v, &selected(), true);
     assert_eq!(rows[0], ("Kurs USD".to_string(), "79.941 $".to_string()));
     assert_eq!(rows[1], ("Blockhöhe".to_string(), "973 692".to_string()));
     assert_eq!(
@@ -40,11 +40,21 @@ fn rows_in_selection_order_with_units() {
 }
 
 #[test]
+fn fee_without_precise_source_shows_no_decimals() {
+    let v = values(vec![("fee:fastest", Ok(3.0))]);
+    let sel = vec!["fee:fastest".to_string()];
+    assert_eq!(
+        popup_rows_lang(true, &v, &sel, false),
+        vec![("Gebühr (schnellste)".to_string(), "3 sat/vB".to_string())]
+    );
+}
+
+#[test]
 fn failed_value_shows_dash() {
     let v = values(vec![("fee:hour", Err(()))]);
     let sel = ["fee:hour".to_string()];
     assert_eq!(
-        popup_rows_lang(true, &v, &sel),
+        popup_rows_lang(true, &v, &sel, true),
         vec![("Gebühr (Stunde)".to_string(), "—".to_string())]
     );
 }
@@ -53,14 +63,14 @@ fn failed_value_shows_dash() {
 fn missing_value_shows_dash() {
     let sel = ["price:EUR".to_string()];
     assert_eq!(
-        popup_rows_lang(true, &HashMap::new(), &sel),
+        popup_rows_lang(true, &HashMap::new(), &sel, true),
         vec![("Kurs EUR".to_string(), "—".to_string())]
     );
 }
 
 #[test]
 fn empty_selection_gives_no_rows() {
-    assert!(popup_rows_lang(true, &HashMap::new(), &[]).is_empty());
+    assert!(popup_rows_lang(true, &HashMap::new(), &[], true).is_empty());
 }
 
 #[test]
