@@ -40,6 +40,16 @@ i18n-embed = { version = "0.16.0", features = [
 i18n-embed-fl = "0.10"
 rust-embed = "8.11.0"
 
+# Upstream hat das Crate in dbus-settings-bindings main zu
+# „cosmic-settings-daemon-zbus“ umbenannt; der gepinnte libcosmic-Rev
+# braucht noch den alten Namen „cosmic-settings-daemon“ (zbus 5).
+# Der Pfad-Patch auf den Vendor-Snapshot (siehe vendor/cosmic-settings-
+# daemon/README) hält `cargo update` funktionsfähig; die übrigen
+# Bindings dieses Repos aktualisieren sich normal.
+[patch.'https://github.com/pop-os/dbus-settings-bindings']
+cosmic-settings-daemon = { path = "vendor/cosmic-settings-daemon" }
+switcheroo-control = { path = "vendor/switcheroo-control" }
+
 [dev-dependencies]
 httpmock = "0.9"
 tempfile = "3"

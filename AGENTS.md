@@ -72,6 +72,16 @@ BTC prices per currency, fee estimates and the current block height.
   Never tag a release from a stale Cargo.lock — v1.3.0 shipped outdated
   transitive dependencies (Dependabot warnings) because this step was
   skipped; the patch release fixed it.
+- **Vendored dbus-settings-bindings crates:** upstream renamed
+  `cosmic-settings-daemon` → `cosmic-settings-daemon-zbus` and
+  `switcheroo-control` → `switcheroo-control-zbus` on `main`; the pinned
+  libcosmic rev still needs the old names. Both crates are vendored in
+  `vendor/` and wired up via `[patch.'https://github.com/pop-os/
+dbus-settings-bindings']` (path patches — a rev/branch patch fails with
+  cargo's same-source rule). With these patches in place `cargo update`
+  works fully again; if the libcosmic pin is ever raised to a rev using
+  the zbus-6 bindings, the patch entries and `vendor/` can go away
+  (details in `vendor/*/README.md`).
 
 ## Reliability patterns (v1.3.0)
 
